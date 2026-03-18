@@ -1,0 +1,11 @@
+﻿<Solution>
+  <Project Path="Bhaptics.SDK2.Editor.csproj" />
+  <Project Path="Assembly-CSharp.csproj" />
+  <Project Path="IngameDebugConsole.Runtime.csproj" />
+  <Project Path="Unity.WebRTC.Samples.csproj" />
+  <Project Path="Assembly-CSharp-Editor.csproj" />
+  <Project Path="Bhaptics.SDK2.csproj" />
+  <Project Path="Assembly-CSharp-firstpass.csproj" />
+  <Project Path="IngameDebugConsole.Editor.csproj" />
+  <Project Path="Unity.WebRTC.Samples.Editror.csproj" />
+</Solution>
