@@ -15,7 +15,7 @@
       "url": "https://packages.unity.com"
     },
     "com.meta.xr.sdk.interaction": {
-      "version": "81.0.0",
+      "version": "85.0.0",
       "depth": 1,
       "source": "registry",
       "dependencies": {
@@ -25,12 +25,12 @@
       "url": "https://packages.unity.com"
     },
     "com.meta.xr.sdk.interaction.ovr": {
-      "version": "81.0.0",
+      "version": "85.0.0",
       "depth": 0,
       "source": "registry",
       "dependencies": {
-        "com.meta.xr.sdk.core": "81.0.0",
-        "com.meta.xr.sdk.interaction": "81.0.0"
+        "com.meta.xr.sdk.core": "85.0.0",
+        "com.meta.xr.sdk.interaction": "85.0.0"
       },
       "url": "https://packages.unity.com"
     },
@@ -44,13 +44,6 @@
         "com.unity.ugui": "1.0.0"
       },
       "hash": "d3b89c847dbcff03d0e318e570785d149238ad80"
-    },
-    "com.meta.xr.simulator": {
-      "version": "81.0.0",
-      "depth": 0,
-      "source": "registry",
-      "dependencies": {},
-      "url": "https://packages.unity.com"
     },
     "com.unity.2d.sprite": {
       "version": "1.0.0",
@@ -284,6 +277,35 @@
       },
       "url": "https://packages.unity.com"
     },
+    "com.unity.xr.arfoundation": {
+      "version": "6.4.0",
+      "depth": 1,
+      "source": "registry",
+      "dependencies": {
+        "com.unity.ugui": "2.0.0",
+        "com.unity.modules.ui": "1.0.0",
+        "com.unity.inputsystem": "1.6.3",
+        "com.unity.mathematics": "1.2.6",
+        "com.unity.xr.core-utils": "2.5.1",
+        "com.unity.xr.management": "4.4.0",
+        "com.unity.editorcoroutines": "1.0.0",
+        "com.unity.modules.particlesystem": "1.0.0",
+        "com.unity.modules.unityanalytics": "1.0.0",
+        "com.unity.modules.unitywebrequest": "1.0.0"
+      },
+      "url": "https://packages.unity.com"
+    },
+    "com.unity.xr.compositionlayers": {
+      "version": "2.3.0",
+      "depth": 1,
+      "source": "registry",
+      "dependencies": {
+        "com.unity.inputsystem": "1.6.3",
+        "com.unity.xr.core-utils": "2.2.2",
+        "com.unity.xr.management": "4.0.1"
+      },
+      "url": "https://packages.unity.com"
+    },
     "com.unity.xr.core-utils": {
       "version": "2.5.3",
       "depth": 1,
@@ -312,6 +334,19 @@
         "com.unity.xr.core-utils": "2.2.1",
         "com.unity.modules.subsystems": "1.0.0",
         "com.unity.xr.legacyinputhelpers": "2.1.11"
+      },
+      "url": "https://packages.unity.com"
+    },
+    "com.unity.xr.meta-openxr": {
+      "version": "2.4.0",
+      "depth": 0,
+      "source": "registry",
+      "dependencies": {
+        "com.unity.xr.openxr": "1.15.1",
+        "com.unity.xr.core-utils": "2.5.1",
+        "com.unity.xr.management": "4.4.0",
+        "com.unity.xr.arfoundation": "6.4.0",
+        "com.unity.xr.compositionlayers": "2.2.0"
       },
       "url": "https://packages.unity.com"
     },

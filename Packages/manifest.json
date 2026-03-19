@@ -2,9 +2,8 @@
   "dependencies": {
     "com.endel.nativewebsocket": "https://github.com/endel/NativeWebSocket.git#upm",
     "com.meta.xr.sdk.core": "85.0.0",
-    "com.meta.xr.sdk.interaction.ovr": "81.0.0",
+    "com.meta.xr.sdk.interaction.ovr": "85.0.0",
     "com.meta.xr.sdk.movement": "https://github.com/oculus-samples/Unity-Movement.git",
-    "com.meta.xr.simulator": "81.0.0",
     "com.unity.2d.sprite": "1.0.0",
     "com.unity.ai.navigation": "2.0.11",
     "com.unity.collab-proxy": "2.11.4",
@@ -20,6 +19,7 @@
     "com.unity.visualscripting": "1.9.10",
     "com.unity.webrtc": "3.0.0",
     "com.unity.xr.management": "4.5.4",
+    "com.unity.xr.meta-openxr": "2.4.0",
     "com.unity.xr.openxr": "1.16.1",
     "com.unity.modules.accessibility": "1.0.0",
     "com.unity.modules.adaptiveperformance": "1.0.0",
