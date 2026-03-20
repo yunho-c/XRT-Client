@@ -7309,10 +7309,6 @@ PrefabInstance:
       propertyPath: m_LocalEulerAnglesHint.z
       value: 0
       objectReference: {fileID: 0}
-    - target: {fileID: 9185927945476364242, guid: 595656f9f1b2ad346bbcb73a4117a02e, type: 3}
-      propertyPath: m_Enabled
-      value: 0
-      objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []
     m_AddedGameObjects: []
@@ -8053,6 +8049,7 @@ GameObject:
   - component: {fileID: 1187398186}
   - component: {fileID: 1187398185}
   - component: {fileID: 1187398184}
+  - component: {fileID: 1187398187}
   m_Layer: 0
   m_Name: CenterEyeAnchor
   m_TagString: MainCamera
@@ -8180,6 +8177,25 @@ AudioListener:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1187398182}
   m_Enabled: 1
+--- !u!114 &1187398187
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1187398182}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 4966719baa26e4b0e8231a24d9bd491a, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Unity.XR.ARFoundation::UnityEngine.XR.ARFoundation.ARCameraManager
+  m_FocusMode: -1
+  m_LightEstimationMode: -1
+  m_AutoFocus: 1
+  m_ImageStabilization: 0
+  m_LightEstimation: 0
+  m_FacingDirection: 1
+  m_RenderMode: 0
 --- !u!1 &1198365956
 GameObject:
   m_ObjectHideFlags: 0
@@ -10807,10 +10823,6 @@ PrefabInstance:
     serializedVersion: 3
     m_TransformParent: {fileID: 0}
     m_Modifications:
-    - target: {fileID: 2868661073973002005, guid: bb7dcf67defb7d842853b66e812e4e2e, type: 3}
-      propertyPath: m_Enabled
-      value: 0
-      objectReference: {fileID: 0}
     - target: {fileID: 5259986588919626442, guid: bb7dcf67defb7d842853b66e812e4e2e, type: 3}
       propertyPath: m_Name
       value: '[bHapticsGlove]'
@@ -11717,10 +11729,6 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 384313019955581315, guid: c029aaa7511b7274cac15786f950078f, type: 3}
       propertyPath: m_LocalEulerAnglesHint.z
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 9070943672644481630, guid: c029aaa7511b7274cac15786f950078f, type: 3}
-      propertyPath: m_Enabled
       value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 9217152344612217286, guid: c029aaa7511b7274cac15786f950078f, type: 3}
@@ -12920,9 +12928,9 @@ MonoBehaviour:
   requestBodyTrackingPermissionOnStartup: 1
   requestFaceTrackingPermissionOnStartup: 1
   requestEyeTrackingPermissionOnStartup: 0
-  requestScenePermissionOnStartup: 1
+  requestScenePermissionOnStartup: 0
   requestRecordAudioPermissionOnStartup: 1
-  requestPassthroughCameraAccessPermissionOnStartup: 1
+  requestPassthroughCameraAccessPermissionOnStartup: 0
   _localDimming: 1
   _trackingOriginType: 1
   usePositionTracking: 1
@@ -13092,7 +13100,6 @@ GameObject:
   m_Component:
   - component: {fileID: 1731597647}
   - component: {fileID: 1731597646}
-  - component: {fileID: 1731597649}
   - component: {fileID: 1731597648}
   m_Layer: 0
   m_Name: AprilTagTracker
@@ -13139,28 +13146,15 @@ MonoBehaviour:
   m_GameObject: {fileID: 1731597645}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: ef9a7893e57c04c0db4114c70954b915, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: meta.xr.mrutilitykit::Meta.XR.PassthroughCameraAccess
-  CameraPosition: 0
-  RequestedResolution: {x: 1280, y: 960}
-  _maxFramerate: 60
-  TargetMaterial: {fileID: 0}
-  _texturePropertyName: 
---- !u!114 &1731597649
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1731597645}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 7935a9e6e608eb94ea20fcbbbe82f3c9, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::QuestCameraExtractor
-  cameraAccess: {fileID: 1731597648}
+  cameraManager: {fileID: 1187398187}
   tracker: {fileID: 1731597646}
+  defaultFx: 500
+  defaultFy: 500
+  defaultCx: 512
+  defaultCy: 512
 --- !u!1 &1731952116
 GameObject:
   m_ObjectHideFlags: 0
@@ -15211,26 +15205,14 @@ PrefabInstance:
       propertyPath: m_Name
       value: RockRollPoseLeft
       objectReference: {fileID: 0}
-    - target: {fileID: 2327948942383781428, guid: cefce53368228214e83ff681bb4d083b, type: 3}
-      propertyPath: m_IsActive
-      value: 1
-      objectReference: {fileID: 0}
     - target: {fileID: 2867576667651749554, guid: cefce53368228214e83ff681bb4d083b, type: 3}
       propertyPath: _hand
       value: 
       objectReference: {fileID: 1611343556}
     - target: {fileID: 2867576667651749554, guid: cefce53368228214e83ff681bb4d083b, type: 3}
-      propertyPath: m_Enabled
-      value: 1
-      objectReference: {fileID: 0}
-    - target: {fileID: 2867576667651749554, guid: cefce53368228214e83ff681bb4d083b, type: 3}
       propertyPath: _fingerFeatureStateProvider
       value: 
       objectReference: {fileID: 1991450384}
-    - target: {fileID: 2910307537169492793, guid: cefce53368228214e83ff681bb4d083b, type: 3}
-      propertyPath: m_Enabled
-      value: 1
-      objectReference: {fileID: 0}
     - target: {fileID: 6554563834468171209, guid: cefce53368228214e83ff681bb4d083b, type: 3}
       propertyPath: m_LocalPosition.x
       value: -0.24886

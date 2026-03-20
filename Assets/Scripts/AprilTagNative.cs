@@ -73,7 +73,12 @@ namespace AprilTag
         public static extern void apriltag_detector_destroy(IntPtr td);
 
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-        public static extern void apriltag_detector_add_family(IntPtr td, IntPtr fam);
+        public static extern void apriltag_detector_add_family_bits(IntPtr td, IntPtr fam, int bits_corrected);
+
+        // Convenience wrapper
+        public static void apriltag_detector_add_family(IntPtr td, IntPtr fam) {
+            apriltag_detector_add_family_bits(td, fam, 2);
+        }
 
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
         public static extern void apriltag_detector_remove_family(IntPtr td, IntPtr fam);

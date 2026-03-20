@@ -214,7 +214,7 @@ public class BHapticsFingertipHaptics : MonoBehaviour
 
     void Update()
     {
-        if (trackFunctionCalls) Debug.Log("[FUNCTION_TRACKER] Update() called");
+        // if (trackFunctionCalls) Debug.Log("[FUNCTION_TRACKER] Update() called");
         // Update velocity tracking for all fingers currently touching UI
         if (enableVelocityBasedHaptics)
         {
@@ -279,7 +279,7 @@ public class BHapticsFingertipHaptics : MonoBehaviour
     /// </summary>
     void CheckInputFieldTextChanges()
     {
-        if (trackFunctionCalls) Debug.Log("[FUNCTION_TRACKER] CheckInputFieldTextChanges() called");
+        // if (trackFunctionCalls) Debug.Log("[FUNCTION_TRACKER] CheckInputFieldTextChanges() called");
         
         // Check standard InputFields
         for (int i = monitoredInputFields.Count - 1; i >= 0; i--)
@@ -624,7 +624,7 @@ public class BHapticsFingertipHaptics : MonoBehaviour
     /// </summary>
     void UpdateFingerVelocities()
     {
-        if (trackFunctionCalls) Debug.Log("[FUNCTION_TRACKER] UpdateFingerVelocities() called");
+        // if (trackFunctionCalls) Debug.Log("[FUNCTION_TRACKER] UpdateFingerVelocities() called");
         float deltaTime = Time.deltaTime;
         if (deltaTime <= 0f) return;
 
@@ -1822,7 +1822,7 @@ public class BHapticsFingertipHaptics : MonoBehaviour
     /// </summary>
     public void OnFingertipTrigger(int fingerIndex, Collider other)
     {
-        if (trackFunctionCalls) Debug.Log($"[FUNCTION_TRACKER] OnFingertipTrigger({fingerIndex}) called");
+        // if (trackFunctionCalls) Debug.Log($"[FUNCTION_TRACKER] OnFingertipTrigger({fingerIndex}) called");
         if (fingerIndex < 0 || fingerIndex >= fingertipTransforms.Length)
         {
             if (showDebugLogs)
@@ -1945,7 +1945,7 @@ public class BHapticsFingertipHaptics : MonoBehaviour
     /// </summary>
     public void OnFingertipTriggerExit(int fingerIndex, Collider other)
     {
-        if (trackFunctionCalls) Debug.Log($"[FUNCTION_TRACKER] OnFingertipTriggerExit({fingerIndex}) called");
+        // if (trackFunctionCalls) Debug.Log($"[FUNCTION_TRACKER] OnFingertipTriggerExit({fingerIndex}) called");
         if (fingerIndex < 0 || fingerIndex >= fingertipTransforms.Length)
             return;
 
@@ -1994,7 +1994,7 @@ public class BHapticsFingertipHaptics : MonoBehaviour
     /// </summary>
     IInteractable FindInteractable(Collider collider)
     {
-        if (trackFunctionCalls) Debug.Log("[FUNCTION_TRACKER] FindInteractable() called");
+        // if (trackFunctionCalls) Debug.Log("[FUNCTION_TRACKER] FindInteractable() called");
         if (collider == null) return null;
         
         Transform checkTransform = collider.transform;
@@ -2263,7 +2263,7 @@ public class BHapticsFingertipHaptics : MonoBehaviour
 
     void OnRayInteractableSelected(IInteractable interactable)
     {
-        if (trackFunctionCalls) Debug.Log("[FUNCTION_TRACKER] OnRayInteractableSelected() called");
+        // if (trackFunctionCalls) Debug.Log("[FUNCTION_TRACKER] OnRayInteractableSelected() called");
         // THIS IS A PINCH INTERACTION - Send haptics to both thumb and index finger
         // Thumb = fingerIndex 0, Index = fingerIndex 1
         
@@ -2288,7 +2288,7 @@ public class BHapticsFingertipHaptics : MonoBehaviour
 
     void OnRayInteractableUnselected(IInteractable interactable)
     {
-        if (trackFunctionCalls) Debug.Log("[FUNCTION_TRACKER] OnRayInteractableUnselected() called");
+        // if (trackFunctionCalls) Debug.Log("[FUNCTION_TRACKER] OnRayInteractableUnselected() called");
         if (showDebugLogs)
         {
             Debug.Log($"[BHapticsFingertipHaptics] {(isLeftHand ? "Left" : "Right")} hand pinch interaction ended on {interactable}");
@@ -2300,7 +2300,7 @@ public class BHapticsFingertipHaptics : MonoBehaviour
     /// </summary>
     System.Collections.IEnumerator SendPinchHapticPulses()
     {
-        if (trackFunctionCalls) Debug.Log("[FUNCTION_TRACKER] SendPinchHapticPulses() called");
+        // if (trackFunctionCalls) Debug.Log("[FUNCTION_TRACKER] SendPinchHapticPulses() called");
         if (bHapticsGlove == null)
         {
             // Try to reacquire bHapticsGlove instance if it's null
@@ -2375,7 +2375,7 @@ public class BHapticsFingertipHaptics : MonoBehaviour
     /// </summary>
     bool ShouldTriggerHaptic(Collider other)
     {
-        if (trackFunctionCalls) Debug.Log("[FUNCTION_TRACKER] ShouldTriggerHaptic() called");
+        // if (trackFunctionCalls) Debug.Log("[FUNCTION_TRACKER] ShouldTriggerHaptic() called");
         if (other == null)
             return false;
 
@@ -2786,7 +2786,7 @@ public class FingertipColliderHandler : MonoBehaviour
 
     void OnTriggerEnter(Collider other)
     {
-        if (parent != null && parent.trackFunctionCalls) Debug.Log($"[FUNCTION_TRACKER] FingertipColliderHandler.OnTriggerEnter({fingerIndex}) called");
+        // if (parent != null && parent.trackFunctionCalls) Debug.Log($"[FUNCTION_TRACKER] FingertipColliderHandler.OnTriggerEnter({fingerIndex}) called");
         // Track which interactable is being touched by which finger
         if (parent != null)
         {
@@ -2805,7 +2805,7 @@ public class FingertipColliderHandler : MonoBehaviour
 
     void OnTriggerExit(Collider other)
     {
-        if (parent != null && parent.trackFunctionCalls) Debug.Log($"[FUNCTION_TRACKER] FingertipColliderHandler.OnTriggerExit({fingerIndex}) called");
+        // if (parent != null && parent.trackFunctionCalls) Debug.Log($"[FUNCTION_TRACKER] FingertipColliderHandler.OnTriggerExit({fingerIndex}) called");
         // Clean up when finger leaves the interactable
         if (parent != null)
         {
@@ -2815,7 +2815,7 @@ public class FingertipColliderHandler : MonoBehaviour
 
     void OnTriggerStay(Collider other)
     {
-        if (parent != null && parent.trackFunctionCalls) Debug.Log($"[FUNCTION_TRACKER] FingertipColliderHandler.OnTriggerStay({fingerIndex}) called");
+        // if (parent != null && parent.trackFunctionCalls) Debug.Log($"[FUNCTION_TRACKER] FingertipColliderHandler.OnTriggerStay({fingerIndex}) called");
         // Optionally trigger continuous haptics while touching UI
         // Uncomment if you want continuous feedback while touching
         // if (parent != null && Time.frameCount % 10 == 0) // Throttle to every 10 frames

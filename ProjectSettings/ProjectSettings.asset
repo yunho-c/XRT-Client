@@ -275,7 +275,7 @@ PlayerSettings:
   AndroidAllowedArchitectures: -1
   AndroidSplashScreenScale: 0
   androidSplashScreen: {fileID: 0}
-  AndroidKeystoreName: C:/Users/kczttm/Downloads/XR-Robot-Teleop-Client-Secrets-main/XR-Robot-Teleop-Client-Secrets-main/user.keystore.keystore
+  AndroidKeystoreName: C:/Users/ckong35/workspaces/XR-Robot-Teleop-Client-Secrets-main/user.keystore.keystore
   AndroidKeyaliasName: gamereleasekey
   AndroidEnableArmv9SecurityFeatures: 0
   AndroidEnableArm64MTE: 0

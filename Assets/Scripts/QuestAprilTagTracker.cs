@@ -30,13 +30,13 @@ public class QuestAprilTagTracker : MonoBehaviour
 
     void Start()
     {
-#if UNITY_ANDROID && !UNITY_EDITOR
+#if (UNITY_ANDROID && !UNITY_EDITOR) || UNITY_STANDALONE_WIN || UNITY_EDITOR_WIN
         // Initialize Detector and Tag Family only on actual device
         detector = AprilTagNative.apriltag_detector_create();
         family = AprilTagNative.tag36h11_create(); // Commonly used tag family
         AprilTagNative.apriltag_detector_add_family(detector, family);
 #else
-        Debug.LogWarning("[QuestAprilTagTracker] AprilTag native library (.so) cannot run in the Windows Editor. Tracking is disabled until built to Android/Quest.");
+        Debug.LogWarning("[QuestAprilTagTracker] AprilTag native library not supported on this platform.");
 #endif
     }
 
@@ -57,11 +57,14 @@ public class QuestAprilTagTracker : MonoBehaviour
                     Debug.DrawRay(result.position, result.rotation * Vector3.forward * axisLength, Color.blue, 0.1f);
                 }
 
-                // TODO: Wire this to your specific UI or GameObject representations.
-                // Debug.Log($"[AprilTag] Detected Tag ID {result.id} at Position {result.position} / Rotation {result.rotation.eulerAngles}");
+                // Call the Event if you had one, or wire it up:
+                Debug.Log($"[AprilTag] Detected Tag ID {result.id} at Position {result.position} / Rotation {result.rotation.eulerAngles}");
             }
         }
     }
+
+    private byte[] rawImageBuffer;
+    private GCHandle pinnedBuffer;
 
     /// <summary>
     /// Call this from your Meta XR camera frame callback (OVRManager or Passthrough layer).
@@ -71,11 +74,22 @@ public class QuestAprilTagTracker : MonoBehaviour
         // Don't process if the script/GameObject is disabled in the Unity Inspector
         if (!this.isActiveAndEnabled) return;
 
-#if UNITY_ANDROID && !UNITY_EDITOR
+#if (UNITY_ANDROID && !UNITY_EDITOR) || UNITY_STANDALONE_WIN || UNITY_EDITOR_WIN
         // Skip if the background thread is still busy processing a prior frame
         if (isExecutingTask) return;
 
         isExecutingTask = true;
+
+        // Copy raw memory to managed buffer on the main thread so we don't hold the camera frame hostage.
+        int bufferSize = stride * height;
+        if (rawImageBuffer == null || rawImageBuffer.Length != bufferSize)
+        {
+            if (pinnedBuffer.IsAllocated)
+                pinnedBuffer.Free();
+            rawImageBuffer = new byte[bufferSize];
+            pinnedBuffer = GCHandle.Alloc(rawImageBuffer, GCHandleType.Pinned);
+        }
+        Marshal.Copy(yChannelBuffer, rawImageBuffer, 0, bufferSize);
 
         // Spin up a background task
         Task.Run(() =>
@@ -88,7 +102,7 @@ public class QuestAprilTagTracker : MonoBehaviour
                     width = width,
                     height = height,
                     stride = stride,
-                    buf = yChannelBuffer // The raw pointer to the YUV 'Y' plane
+                    buf = pinnedBuffer.AddrOfPinnedObject() // Use our safely copied and pinned memory
                 };
 
                 // Execute detection blocking thread
@@ -181,7 +195,10 @@ public class QuestAprilTagTracker : MonoBehaviour
 
     void OnDestroy()
     {
-#if UNITY_ANDROID && !UNITY_EDITOR
+        if (pinnedBuffer.IsAllocated)
+            pinnedBuffer.Free();
+
+#if (UNITY_ANDROID && !UNITY_EDITOR) || UNITY_STANDALONE_WIN || UNITY_EDITOR_WIN
         // Clean up the detector to prevent memory leaks when stopping the app
         if (detector != IntPtr.Zero)
         {
