@@ -36,6 +36,11 @@ public class QuestCameraExtractor : MonoBehaviour
         {
             Debug.LogError("[QuestCameraExtractor] QuestAprilTagTracker is NULL! Please assign it in the Inspector.");
         }
+        else if (cameraAccess != null)
+        {
+            // Bind Meta's true fisheye distortion un-projector to the tracker!
+            tracker.RayProjector = (uv) => cameraAccess.ViewportPointToRay(uv);
+        }
 
         // Request Passthrough Camera Permission dynamically at startup
 #if UNITY_ANDROID && !UNITY_EDITOR
@@ -45,6 +50,8 @@ public class QuestCameraExtractor : MonoBehaviour
         }
 #endif
     }
+
+    private RenderTexture tempRenderTexture;
 
     void Update()
     {
@@ -66,8 +73,21 @@ public class QuestCameraExtractor : MonoBehaviour
             if (tex != null)
             {
                 readbackInProgress = true;
-                // Request readback without blocking the main render thread
-                AsyncGPUReadback.Request(tex, 0, TextureFormat.RGBA32, OnReadbackComplete);
+                
+                // Quest camera textures often can't be read directly (ExternalOES). 
+                // We must blit to a temporary RenderTexture first to ensure readback succeeds.
+                if (tempRenderTexture == null || tempRenderTexture.width != tex.width || tempRenderTexture.height != tex.height)
+                {
+                    if (tempRenderTexture != null) tempRenderTexture.Release();
+                    tempRenderTexture = new RenderTexture(tex.width, tex.height, 0, RenderTextureFormat.R8);
+                    tempRenderTexture.Create();
+                }
+                
+                // Scale Y by -1 to flip the ExternalOES/hardware image right-side up
+                Graphics.Blit(tex, tempRenderTexture, new Vector2(1, -1), new Vector2(0, 1));
+
+                // Request readback directly as R8 (Grayscale)
+                AsyncGPUReadback.Request(tempRenderTexture, 0, TextureFormat.R8, OnReadbackComplete);
             }
         }
     }
@@ -78,12 +98,12 @@ public class QuestCameraExtractor : MonoBehaviour
 
         if (request.hasError)
         {
-            Debug.LogWarning("[QuestCameraExtractor] GPU Readback error.");
+            Debug.LogWarning("[QuestCameraExtractor] GPU Readback error. The texture format might not be supported.");
             return;
         }
 
-        // We receive the data as RGBA32
-        NativeArray<Color32> colors = request.GetData<Color32>();
+        // We receive the data directly as a 1-byte grayscale array (R8 format)
+        NativeArray<byte> colors = request.GetData<byte>();
         int width = request.width;
         int height = request.height;
         int size = width * height;
@@ -95,19 +115,14 @@ public class QuestCameraExtractor : MonoBehaviour
             Debug.Log($"[QuestCameraExtractor] Allocated Grayscale Buffer: {width}x{height}");
         }
 
-        // Fast conversion: Copy the Green channel of each RGBA block into our grayscale buffer
-        Color32* colorPtr = (Color32*)colors.GetUnsafeReadOnlyPtr();
-        fixed (byte* grayPtr = grayscaleBuffer)
+        // Fast memory copy instead of iterating pixel by pixel
+        colors.CopyTo(grayscaleBuffer);
+
+        // Sanity check: Sample the center pixel to ensure we aren't passing a completely black image to the tracker
+        if (Time.frameCount % 120 == 0)
         {
-            Color32* src = colorPtr;
-            byte* dst = grayPtr;
-            for (int i = 0; i < size; i++)
-            {
-                // Just use the green channel for Y (luminance) as an approximation
-                *dst = src->g; 
-                src++;
-                dst++;
-            }
+            int centerPixelIndex = (height / 2) * width + (width / 2);
+            Debug.Log($"[QuestCameraExtractor] Center pixel brightness: {grayscaleBuffer[centerPixelIndex]} / 255");
         }
 
         // Extract camera intrinsics

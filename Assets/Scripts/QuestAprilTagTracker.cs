@@ -11,8 +11,11 @@ public class QuestAprilTagTracker : MonoBehaviour
     public float tagSizeMeters = 0.05f; // Size of the tag in meters
 
     [Header("Visualization")]
-    [Tooltip("If checked, draws an RGB coordinate axis at the detected AprilTag using Debug.DrawRay.")]
+    [Tooltip("If checked, draws an RGB coordinate axis at the detected AprilTag.")]
     public bool drawAxesGizmo = true;
+
+    [Tooltip("Uses Meta's distortion-corrected projection. Uncheck if the 3D poses appear broken or completely detached from the tag.")]
+    public bool useMetaProjection = true;
 
     private IntPtr detector;
     private IntPtr family;
@@ -24,9 +27,21 @@ public class QuestAprilTagTracker : MonoBehaviour
         public int id;
         public Vector3 position;
         public Quaternion rotation;
+        // Raw OpenCV Data and Camera Frame Info for advanced reprojection
+        public Vector3 rawLocalPosition;
+        public Vector2 centerPixel;
+        public int frameWidth;
+        public int frameHeight;
+        public Pose cameraPose;
     }
 
     private ConcurrentQueue<TagResult[]> mainThreadQueue = new ConcurrentQueue<TagResult[]>();
+    
+    // Optional callback for advanced projection (like Meta Passthrough fisheye fix)
+    public Func<Vector2, Ray> RayProjector;
+    
+    // Dictionary to hold spawned 3D visualizers for each detected tag
+    private System.Collections.Generic.Dictionary<int, GameObject> tagVisualizers = new System.Collections.Generic.Dictionary<int, GameObject>();
 
     void Start()
     {
@@ -47,14 +62,74 @@ public class QuestAprilTagTracker : MonoBehaviour
         {
             foreach (var result in detections)
             {
-                // Optional: Draw lightweight RGB axes in the Scene/Game view
+                // Draw 3D axes that are actually visible *inside VR*
                 if (drawAxesGizmo)
                 {
-                    // Draw X (Red), Y (Green), Z (Blue) - length is a fraction of tag size
-                    float axisLength = tagSizeMeters * 1.5f;
-                    Debug.DrawRay(result.position, result.rotation * Vector3.right * axisLength, Color.red, 0.1f);
-                    Debug.DrawRay(result.position, result.rotation * Vector3.up * axisLength, Color.green, 0.1f);
-                    Debug.DrawRay(result.position, result.rotation * Vector3.forward * axisLength, Color.blue, 0.1f);
+                    if (!tagVisualizers.TryGetValue(result.id, out GameObject visualizer))
+                    {
+                        visualizer = new GameObject($"AprilTag_Visualizer_{result.id}");
+                        
+                        float len = tagSizeMeters * 2.0f; // Make axes big enough to clearly see
+
+                        // Helper to create reliable visible Unlit lines
+                        GameObject CreateLine(string name, Color color, Vector3 endPos)
+                        {
+                            var go = new GameObject(name);
+                            go.transform.SetParent(visualizer.transform, false);
+                            var lr = go.AddComponent<LineRenderer>();
+                            lr.material = new Material(Shader.Find("Sprites/Default")); // Always renders correctly, ignores lighting
+                            lr.startColor = color; lr.endColor = color;
+                            lr.startWidth = 0.005f; lr.endWidth = 0.005f; // 5mm thick
+                            lr.useWorldSpace = false;
+                            lr.positionCount = 2;
+                            lr.SetPosition(0, Vector3.zero);
+                            lr.SetPosition(1, endPos);
+                            return go;
+                        }
+
+                        CreateLine("X_Red", Color.red, new Vector3(len, 0, 0));
+                        CreateLine("Y_Green", Color.green, new Vector3(0, len, 0));
+                        CreateLine("Z_Blue", Color.blue, new Vector3(0, 0, len));
+
+                        // Central white sphere so we never lose the origin point!
+                        var origin = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                        origin.transform.SetParent(visualizer.transform, false);
+                        origin.transform.localScale = Vector3.one * 0.015f; // 1.5 cm sphere
+                        var mat = new Material(Shader.Find("Sprites/Default"));
+                        mat.color = Color.white;
+                        origin.GetComponent<Renderer>().material = mat;
+                        Destroy(origin.GetComponent<Collider>());
+
+                        tagVisualizers[result.id] = visualizer;
+                    }
+
+                    // Use hardware ray projection for absolute stereo alignment if available
+                    if (useMetaProjection && RayProjector != null && result.frameWidth > 0 && result.frameHeight > 0)
+                    {
+                        // Because we physically flipped the image (scaleY = -1 in Graphics.Blit), OpenCV Y=0 (top) 
+                        // maps to the original hardware image's bottom. Therefore, OpenCV Y / height equals
+                        // exactly Meta's standard Viewport V! (No 1.0f - V inversion needed)
+                        Vector2 uv = new Vector2(
+                            result.centerPixel.x / result.frameWidth,
+                            result.centerPixel.y / result.frameHeight 
+                        );
+
+                        // Project a mathematically perfect ray through Meta's fisheye un-distortion mesh
+                        Ray worldRay = RayProjector(uv);
+                        
+                        // Z is standard depth computed by OpenCV
+                        float distance = result.rawLocalPosition.magnitude * 1.0f; // Scale this if depth is consistently wrong
+                        
+                        // Override position to EXACTLY align with Meta's physical depth
+                        visualizer.transform.position = worldRay.origin + (worldRay.direction.normalized * distance);
+                        visualizer.transform.rotation = result.rotation; 
+                    }
+                    else
+                    {
+                        // Update Position and Rotation based purely on standard camera offset math
+                        visualizer.transform.position = result.position;
+                        visualizer.transform.rotation = result.rotation;
+                    }
                 }
 
                 // Call the Event if you had one, or wire it up:
@@ -148,12 +223,14 @@ public class QuestAprilTagTracker : MonoBehaviour
                         Marshal.Copy(RMat.data, RData, 0, 9);
 
                         // Convert coordinates directly (OpenCV to Unity Space)
+                        // To convert OpenCv (X-right, Y-down, Z-in) to Unity (X-right, Y-up, Z-in):
+                        // We negate the Y displacement and the second row + second column of the rotation matrix.
                         position = new Vector3((float)tData[0], -(float)tData[1], (float)tData[2]);
                         
                         Matrix4x4 unityRotMat = new Matrix4x4();
-                        unityRotMat.m00 = (float)RData[0]; unityRotMat.m01 = (float)RData[1]; unityRotMat.m02 = (float)RData[2]; unityRotMat.m03 = 0;
-                        unityRotMat.m10 = -(float)RData[3]; unityRotMat.m11 = -(float)RData[4]; unityRotMat.m12 = -(float)RData[5]; unityRotMat.m13 = 0;
-                        unityRotMat.m20 = (float)RData[6]; unityRotMat.m21 = (float)RData[7]; unityRotMat.m22 = (float)RData[8]; unityRotMat.m23 = 0;
+                        unityRotMat.m00 = (float)RData[0];  unityRotMat.m01 = -(float)RData[1]; unityRotMat.m02 = (float)RData[2]; unityRotMat.m03 = 0;
+                        unityRotMat.m10 = -(float)RData[3]; unityRotMat.m11 = (float)RData[4];  unityRotMat.m12 = -(float)RData[5]; unityRotMat.m13 = 0;
+                        unityRotMat.m20 = (float)RData[6];  unityRotMat.m21 = -(float)RData[7]; unityRotMat.m22 = (float)RData[8]; unityRotMat.m23 = 0;
                         unityRotMat.m30 = 0; unityRotMat.m31 = 0; unityRotMat.m32 = 0; unityRotMat.m33 = 1;
 
                         rotation = unityRotMat.rotation;
@@ -163,12 +240,27 @@ public class QuestAprilTagTracker : MonoBehaviour
                         rotation = cameraHeadPose.rotation * rotation;
                     }
 
-                    results[i] = new TagResult
-                    {
-                        id = detStructs[i].id,
-                        position = position,
-                        rotation = rotation
-                    };
+                    unsafe {
+                        results[i] = new TagResult
+                        {
+                            id = detStructs[i].id,
+                            position = position,
+                            rotation = rotation,
+                            rawLocalPosition = pose.t != IntPtr.Zero ? new Vector3((float)Marshal.PtrToStructure<matd_t>(pose.t).data, 0, 0) : Vector3.zero, // Filled properly below
+                            centerPixel = new Vector2((float)detStructs[i].c[0], (float)detStructs[i].c[1]),
+                            frameWidth = width,
+                            frameHeight = height,
+                            cameraPose = cameraHeadPose
+                        };
+
+                        if (pose.t != IntPtr.Zero)
+                        {
+                            double[] tData = new double[3];
+                            matd_t tMat = Marshal.PtrToStructure<matd_t>(pose.t);
+                            Marshal.Copy(tMat.data, tData, 0, 3);
+                            results[i].rawLocalPosition = new Vector3((float)tData[0], -(float)tData[1], (float)tData[2]);
+                        }
+                    }
 
                     // Free memory allocated by estimate_tag_pose
                     if (pose.R != IntPtr.Zero) AprilTagNative.matd_destroy(pose.R);
