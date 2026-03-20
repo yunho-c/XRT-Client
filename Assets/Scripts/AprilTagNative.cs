@@ -42,6 +42,25 @@ namespace AprilTag
         public fixed double p[8]; // corners 4x2 array
     }
 
+    // Pose estimation structs
+    [StructLayout(LayoutKind.Sequential)]
+    public struct apriltag_detection_info_t
+    {
+        public IntPtr det;
+        public double tagsize;
+        public double fx;
+        public double fy;
+        public double cx;
+        public double cy;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct apriltag_pose_t
+    {
+        public IntPtr R; // matd_t* (3x3 rotation matrix)
+        public IntPtr t; // matd_t* (3x1 translation vector)
+    }
+
     public static class AprilTagNative
     {
         private const string LibraryName = "apriltag";
@@ -80,6 +99,14 @@ namespace AprilTag
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
         public static extern void apriltag_detections_destroy(IntPtr detections);
 
+        // Matrix Destruction (Needed to prevent leaks on estimated poses)
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void matd_destroy(IntPtr m);
+
+        // Pose Estimation
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern double estimate_tag_pose(ref apriltag_detection_info_t info, out apriltag_pose_t pose);
+
 
         // --- High Level Convenience Method for Unity --- 
 
@@ -106,6 +133,22 @@ namespace AprilTag
             }
 
             return detections;
+        }
+
+        public static IntPtr[] GetDetectionPointers(IntPtr zarrayPtr)
+        {
+            if (zarrayPtr == IntPtr.Zero)
+                return new IntPtr[0];
+
+            zarray_t zarray = Marshal.PtrToStructure<zarray_t>(zarrayPtr);
+            IntPtr[] pointers = new IntPtr[zarray.size];
+
+            for (int i = 0; i < zarray.size; i++)
+            {
+                pointers[i] = Marshal.ReadIntPtr(zarray.data, i * IntPtr.Size);
+            }
+
+            return pointers;
         }
     }
 }

@@ -8045,6 +8045,7 @@ GameObject:
   - component: {fileID: 1187398186}
   - component: {fileID: 1187398185}
   - component: {fileID: 1187398184}
+  - component: {fileID: 1187398187}
   m_Layer: 0
   m_Name: CenterEyeAnchor
   m_TagString: MainCamera
@@ -8172,6 +8173,25 @@ AudioListener:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1187398182}
   m_Enabled: 1
+--- !u!114 &1187398187
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1187398182}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 4966719baa26e4b0e8231a24d9bd491a, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Unity.XR.ARFoundation::UnityEngine.XR.ARFoundation.ARCameraManager
+  m_FocusMode: 1
+  m_LightEstimationMode: 0
+  m_AutoFocus: 1
+  m_ImageStabilization: 0
+  m_LightEstimation: 0
+  m_FacingDirection: 1
+  m_RenderMode: 0
 --- !u!1 &1198365956
 GameObject:
   m_ObjectHideFlags: 0
@@ -9149,6 +9169,34 @@ PrefabInstance:
     serializedVersion: 3
     m_TransformParent: {fileID: 1187398183}
     m_Modifications:
+    - target: {fileID: 68176712933559090, guid: 4b97ac8c74f3dc440842829c03f62e37, type: 3}
+      propertyPath: onValueChanged.m_PersistentCalls.m_Calls.Array.size
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 68176712933559090, guid: 4b97ac8c74f3dc440842829c03f62e37, type: 3}
+      propertyPath: onValueChanged.m_PersistentCalls.m_Calls.Array.data[0].m_Mode
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 68176712933559090, guid: 4b97ac8c74f3dc440842829c03f62e37, type: 3}
+      propertyPath: onValueChanged.m_PersistentCalls.m_Calls.Array.data[0].m_Target
+      value: 
+      objectReference: {fileID: 1731597646}
+    - target: {fileID: 68176712933559090, guid: 4b97ac8c74f3dc440842829c03f62e37, type: 3}
+      propertyPath: onValueChanged.m_PersistentCalls.m_Calls.Array.data[0].m_CallState
+      value: 2
+      objectReference: {fileID: 0}
+    - target: {fileID: 68176712933559090, guid: 4b97ac8c74f3dc440842829c03f62e37, type: 3}
+      propertyPath: onValueChanged.m_PersistentCalls.m_Calls.Array.data[0].m_MethodName
+      value: set_enabled
+      objectReference: {fileID: 0}
+    - target: {fileID: 68176712933559090, guid: 4b97ac8c74f3dc440842829c03f62e37, type: 3}
+      propertyPath: onValueChanged.m_PersistentCalls.m_Calls.Array.data[0].m_TargetAssemblyTypeName
+      value: QuestAprilTagTracker, Assembly-CSharp
+      objectReference: {fileID: 0}
+    - target: {fileID: 68176712933559090, guid: 4b97ac8c74f3dc440842829c03f62e37, type: 3}
+      propertyPath: onValueChanged.m_PersistentCalls.m_Calls.Array.data[0].m_Arguments.m_ObjectArgumentAssemblyTypeName
+      value: UnityEngine.Object, UnityEngine
+      objectReference: {fileID: 0}
     - target: {fileID: 184455425220018334, guid: 4b97ac8c74f3dc440842829c03f62e37, type: 3}
       propertyPath: m_Pivot.x
       value: 0.5
@@ -13030,6 +13078,70 @@ Transform:
   - {fileID: 620069172}
   m_Father: {fileID: 2077111063}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &1731597645
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1731597647}
+  - component: {fileID: 1731597646}
+  - component: {fileID: 1731597648}
+  m_Layer: 0
+  m_Name: AprilTagTracker
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &1731597646
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1731597645}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 85e6edca8392e3d4cb798bb8cae9ab20, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::QuestAprilTagTracker
+  tagSizeMeters: 0.05
+--- !u!4 &1731597647
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1731597645}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &1731597648
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1731597645}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 7935a9e6e608eb94ea20fcbbbe82f3c9, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::QuestCameraExtractor
+  cameraManager: {fileID: 1187398187}
+  tracker: {fileID: 1731597646}
+  defaultFx: 500
+  defaultFy: 500
+  defaultCx: 512
+  defaultCy: 512
 --- !u!1 &1731952116
 GameObject:
   m_ObjectHideFlags: 0
@@ -15293,3 +15405,4 @@ SceneRoots:
   - {fileID: 1058185604}
   - {fileID: 1438223174}
   - {fileID: 1553805726}
+  - {fileID: 1731597647}
