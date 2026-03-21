@@ -76,10 +76,14 @@ public class QuestCameraExtractor : MonoBehaviour
                 
                 // Quest camera textures often can't be read directly (ExternalOES). 
                 // We must blit to a temporary RenderTexture first to ensure readback succeeds.
-                if (tempRenderTexture == null || tempRenderTexture.width != tex.width || tempRenderTexture.height != tex.height)
+                // WE SCALE BY 0.5 TO BOOST APRILTAG PERFORMANCE
+                int targetWidth = tex.width / 2;
+                int targetHeight = tex.height / 2;
+
+                if (tempRenderTexture == null || tempRenderTexture.width != targetWidth || tempRenderTexture.height != targetHeight)
                 {
                     if (tempRenderTexture != null) tempRenderTexture.Release();
-                    tempRenderTexture = new RenderTexture(tex.width, tex.height, 0, RenderTextureFormat.R8);
+                    tempRenderTexture = new RenderTexture(targetWidth, targetHeight, 0, RenderTextureFormat.R8);
                     tempRenderTexture.Create();
                 }
                 
@@ -127,14 +131,15 @@ public class QuestCameraExtractor : MonoBehaviour
 
         // Extract camera intrinsics
         var intrinsics = cameraAccess.Intrinsics;
-        double fx = intrinsics.FocalLength[0];
-        double fy = intrinsics.FocalLength[1];
-        double cx = intrinsics.PrincipalPoint[0];
-        double cy = intrinsics.PrincipalPoint[1];
+        // Divide by 2 because we downsampled the texture by half in the RenderTexture!
+        double fx = intrinsics.FocalLength[0] / 2.0;
+        double fy = intrinsics.FocalLength[1] / 2.0;
+        double cx = intrinsics.PrincipalPoint[0] / 2.0;
+        double cy = intrinsics.PrincipalPoint[1] / 2.0;
 
         // Extrapolate center offset if intrinsics default to 0 due to API latency
-        if (fx == 0) fx = 500.0;
-        if (fy == 0) fy = 500.0;
+        if (fx == 0) fx = 250.0;
+        if (fy == 0) fy = 250.0;
         if (cx == 0) cx = width / 2.0;
         if (cy == 0) cy = height / 2.0;
 

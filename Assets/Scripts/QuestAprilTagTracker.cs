@@ -19,7 +19,7 @@ public class QuestAprilTagTracker : MonoBehaviour
 
     private IntPtr detector;
     private IntPtr family;
-    private bool isExecutingTask = false;
+    private volatile bool isExecutingTask = false;
 
     // A structure to hold the detection result queued back to the main thread
     public struct TagResult
@@ -42,12 +42,24 @@ public class QuestAprilTagTracker : MonoBehaviour
     
     // Dictionary to hold spawned 3D visualizers for each detected tag
     private System.Collections.Generic.Dictionary<int, GameObject> tagVisualizers = new System.Collections.Generic.Dictionary<int, GameObject>();
+    
+    // Cache the material to prevent massive garbage collection/stutter drops on spawn
+    private Material cachedLineMaterial;
 
     void Start()
     {
+        // Cache material once
+        cachedLineMaterial = new Material(Shader.Find("Sprites/Default"));
+
 #if (UNITY_ANDROID && !UNITY_EDITOR) || UNITY_STANDALONE_WIN || UNITY_EDITOR_WIN
         // Initialize Detector and Tag Family only on actual device
         detector = AprilTagNative.apriltag_detector_create();
+        
+        // --- PERFORMANCE BOOST: Configure detector for VR ---
+        // By default apriltag creates a single-threaded detector.
+        // We write to offset 0 (nthreads) to use all CPU cores.
+        Marshal.WriteInt32(detector, 0, Environment.ProcessorCount);
+
         family = AprilTagNative.tag36h11_create(); // Commonly used tag family
         AprilTagNative.apriltag_detector_add_family(detector, family);
 #else
@@ -57,11 +69,25 @@ public class QuestAprilTagTracker : MonoBehaviour
 
     void Update()
     {
+        // Handle visualizers if drawAxesGizmo was toggled off dynamically
+        if (!drawAxesGizmo)
+        {
+            foreach (var kvp in tagVisualizers)
+            {
+                if (kvp.Value != null) kvp.Value.SetActive(false);
+            }
+        }
+
         // We dequeue results built by the background thread here
         while (mainThreadQueue.TryDequeue(out TagResult[] detections))
         {
+            // Keep track of which tags were seen this frame
+            System.Collections.Generic.HashSet<int> seenTags = new System.Collections.Generic.HashSet<int>();
+
             foreach (var result in detections)
             {
+                seenTags.Add(result.id);
+                
                 // Draw 3D axes that are actually visible *inside VR*
                 if (drawAxesGizmo)
                 {
@@ -77,7 +103,7 @@ public class QuestAprilTagTracker : MonoBehaviour
                             var go = new GameObject(name);
                             go.transform.SetParent(visualizer.transform, false);
                             var lr = go.AddComponent<LineRenderer>();
-                            lr.material = new Material(Shader.Find("Sprites/Default")); // Always renders correctly, ignores lighting
+                            lr.material = cachedLineMaterial; // Use cached material!
                             lr.startColor = color; lr.endColor = color;
                             lr.startWidth = 0.005f; lr.endWidth = 0.005f; // 5mm thick
                             lr.useWorldSpace = false;
@@ -95,23 +121,27 @@ public class QuestAprilTagTracker : MonoBehaviour
                         var origin = GameObject.CreatePrimitive(PrimitiveType.Sphere);
                         origin.transform.SetParent(visualizer.transform, false);
                         origin.transform.localScale = Vector3.one * 0.015f; // 1.5 cm sphere
-                        var mat = new Material(Shader.Find("Sprites/Default"));
-                        mat.color = Color.white;
-                        origin.GetComponent<Renderer>().material = mat;
+                        origin.GetComponent<Renderer>().material = cachedLineMaterial; // Use cached material here too!
                         Destroy(origin.GetComponent<Collider>());
 
                         tagVisualizers[result.id] = visualizer;
                     }
 
+                    else
+                    {
+                        // Enable the visualizer if it was disabled
+                        if (visualizer != null && !visualizer.activeSelf)
+                            visualizer.SetActive(true);
+                    }
+
                     // Use hardware ray projection for absolute stereo alignment if available
                     if (useMetaProjection && RayProjector != null && result.frameWidth > 0 && result.frameHeight > 0)
                     {
-                        // Because we physically flipped the image (scaleY = -1 in Graphics.Blit), OpenCV Y=0 (top) 
-                        // maps to the original hardware image's bottom. Therefore, OpenCV Y / height equals
-                        // exactly Meta's standard Viewport V! (No 1.0f - V inversion needed)
+                        // Because OpenCV Y=0 is the top of the image and Unity Viewport V=0 is the BOTTOM,
+                        // we must invert the Y coordinate (1.0f - V) to raycast correctly!
                         Vector2 uv = new Vector2(
                             result.centerPixel.x / result.frameWidth,
-                            result.centerPixel.y / result.frameHeight 
+                            1.0f - (result.centerPixel.y / result.frameHeight)
                         );
 
                         // Project a mathematically perfect ray through Meta's fisheye un-distortion mesh
@@ -134,6 +164,15 @@ public class QuestAprilTagTracker : MonoBehaviour
 
                 // Call the Event if you had one, or wire it up:
                 Debug.Log($"[AprilTag] Detected Tag ID {result.id} at Position {result.position} / Rotation {result.rotation.eulerAngles}");
+            }
+
+            // Hide tags that were not detected in this fresh frame
+            foreach (var kvp in tagVisualizers)
+            {
+                if (!seenTags.Contains(kvp.Key) && kvp.Value != null)
+                {
+                    kvp.Value.SetActive(false);
+                }
             }
         }
     }
@@ -283,6 +322,15 @@ public class QuestAprilTagTracker : MonoBehaviour
             }
         });
 #endif
+    }
+
+    void OnDisable()
+    {
+        // When the script is toggled off from a button or UI, immediately hide all tag visualizers
+        foreach (var kvp in tagVisualizers)
+        {
+            if (kvp.Value != null) kvp.Value.SetActive(false);
+        }
     }
 
     void OnDestroy()
