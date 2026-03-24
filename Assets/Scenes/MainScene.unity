@@ -9158,6 +9158,10 @@ PrefabInstance:
     m_TransformParent: {fileID: 1187398183}
     m_Modifications:
     - target: {fileID: 68176712933559090, guid: 4b97ac8c74f3dc440842829c03f62e37, type: 3}
+      propertyPath: m_IsOn
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 68176712933559090, guid: 4b97ac8c74f3dc440842829c03f62e37, type: 3}
       propertyPath: onValueChanged.m_PersistentCalls.m_Calls.Array.size
       value: 1
       objectReference: {fileID: 0}
@@ -9284,6 +9288,38 @@ PrefabInstance:
     - target: {fileID: 633345792003407783, guid: 4b97ac8c74f3dc440842829c03f62e37, type: 3}
       propertyPath: onValueChanged.m_PersistentCalls.m_Calls.Array.data[0].m_Arguments.m_ObjectArgumentAssemblyTypeName
       value: UnityEngine.Object, UnityEngine
+      objectReference: {fileID: 0}
+    - target: {fileID: 806112794393650627, guid: 4b97ac8c74f3dc440842829c03f62e37, type: 3}
+      propertyPath: m_OnEndEdit.m_PersistentCalls.m_Calls.Array.data[0].m_Target
+      value: 
+      objectReference: {fileID: 1731597646}
+    - target: {fileID: 806112794393650627, guid: 4b97ac8c74f3dc440842829c03f62e37, type: 3}
+      propertyPath: m_OnEndEdit.m_PersistentCalls.m_Calls.Array.data[0].m_MethodName
+      value: UpdateTagSizeFromString
+      objectReference: {fileID: 0}
+    - target: {fileID: 806112794393650627, guid: 4b97ac8c74f3dc440842829c03f62e37, type: 3}
+      propertyPath: m_OnEndEdit.m_PersistentCalls.m_Calls.Array.data[0].m_TargetAssemblyTypeName
+      value: QuestAprilTagTracker, Assembly-CSharp
+      objectReference: {fileID: 0}
+    - target: {fileID: 806112794393650653, guid: 4b97ac8c74f3dc440842829c03f62e37, type: 3}
+      propertyPath: m_AnchorMax.y
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 806112794393650653, guid: 4b97ac8c74f3dc440842829c03f62e37, type: 3}
+      propertyPath: m_AnchorMin.y
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 806112794393650653, guid: 4b97ac8c74f3dc440842829c03f62e37, type: 3}
+      propertyPath: m_SizeDelta.x
+      value: 100
+      objectReference: {fileID: 0}
+    - target: {fileID: 806112794393650653, guid: 4b97ac8c74f3dc440842829c03f62e37, type: 3}
+      propertyPath: m_AnchoredPosition.x
+      value: 50
+      objectReference: {fileID: 0}
+    - target: {fileID: 806112794393650653, guid: 4b97ac8c74f3dc440842829c03f62e37, type: 3}
+      propertyPath: m_AnchoredPosition.y
+      value: -20
       objectReference: {fileID: 0}
     - target: {fileID: 904208527107107900, guid: 4b97ac8c74f3dc440842829c03f62e37, type: 3}
       propertyPath: m_AnchorMax.y
@@ -10297,6 +10333,17 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: f4688fdb7df04437aeb418b961361dc5, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+--- !u!114 &1350388491 stripped
+MonoBehaviour:
+  m_CorrespondingSourceObject: {fileID: 806112794393650627, guid: 4b97ac8c74f3dc440842829c03f62e37, type: 3}
+  m_PrefabInstance: {fileID: 1350388487}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 2da0c512f12947e489f739169773d7ca, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
 --- !u!114 &1350388492 stripped
@@ -13114,7 +13161,9 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::QuestAprilTagTracker
   tagSizeMeters: 0.05
+  sizeInputField: {fileID: 1350388491}
   drawAxesGizmo: 1
+  useMetaProjection: 1
 --- !u!4 &1731597647
 Transform:
   m_ObjectHideFlags: 0
@@ -13225,6 +13274,7 @@ MonoBehaviour:
   serverUrl: mel06293d:8080/offer
   vrCamera: {fileID: 1187398185}
   bodyPoseProvider: {fileID: 1515905724}
+  aprilTagTracker: {fileID: 1731597646}
   statusText: {fileID: 1350388490}
   videoRenderTexture: {fileID: 8400000, guid: c8114d2dae2a84b3fad9412f0c6a9413, type: 2}
   videoMaterial: {fileID: 2100000, guid: 5e1d5e7379e114ad49a9cd559f359d8d, type: 2}

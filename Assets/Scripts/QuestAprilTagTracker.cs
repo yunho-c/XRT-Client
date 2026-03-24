@@ -4,11 +4,14 @@ using System;
 using System.Collections.Concurrent;
 using System.Threading.Tasks;
 using System.Runtime.InteropServices;
+using TMPro;
 
 public class QuestAprilTagTracker : MonoBehaviour
 {
     [Header("Tracking Settings")]
     public float tagSizeMeters = 0.05f; // Size of the tag in meters
+    [Tooltip("Optional: Assign a TextMeshPro Input Field to automatically display the initial tag size.")]
+    public TMP_InputField sizeInputField;
 
     [Header("Visualization")]
     [Tooltip("If checked, draws an RGB coordinate axis at the detected AprilTag.")]
@@ -35,6 +38,9 @@ public class QuestAprilTagTracker : MonoBehaviour
         public Pose cameraPose;
     }
 
+    // Event you can subscribe to in WebRTCController or other scripts
+    public event Action<TagResult[]> OnTagsDetected;
+
     private ConcurrentQueue<TagResult[]> mainThreadQueue = new ConcurrentQueue<TagResult[]>();
     
     // Optional callback for advanced projection (like Meta Passthrough fisheye fix)
@@ -48,6 +54,11 @@ public class QuestAprilTagTracker : MonoBehaviour
 
     void Start()
     {
+        if (sizeInputField != null)
+        {
+            sizeInputField.text = tagSizeMeters.ToString();
+        }
+
         // Cache material once
         cachedLineMaterial = new Material(Shader.Find("Sprites/Default"));
 
@@ -163,8 +174,11 @@ public class QuestAprilTagTracker : MonoBehaviour
                 }
 
                 // Call the Event if you had one, or wire it up:
-                Debug.Log($"[AprilTag] Detected Tag ID {result.id} at Position {result.position} / Rotation {result.rotation.eulerAngles}");
+                // Debug.Log($"[AprilTag] Detected Tag ID {result.id} at Position {result.position} / Rotation {result.rotation.eulerAngles}");
             }
+
+            // Broadcast the tags to other scripts (like WebRTCController)
+            OnTagsDetected?.Invoke(detections);
 
             // Hide tags that were not detected in this fresh frame
             foreach (var kvp in tagVisualizers)
@@ -324,6 +338,15 @@ public class QuestAprilTagTracker : MonoBehaviour
 #endif
     }
 
+    void OnApplicationPause(bool isPaused)
+    {
+        if (isPaused)
+        {
+            // Reset task flag in case the thread was suspended/aborted by the OS when the keyboard opened
+            isExecutingTask = false;
+        }
+    }
+
     void OnDisable()
     {
         // When the script is toggled off from a button or UI, immediately hide all tag visualizers
@@ -349,5 +372,37 @@ public class QuestAprilTagTracker : MonoBehaviour
             family = IntPtr.Zero;
         }
 #endif
+    }
+
+    /// <summary>
+    /// Updates the tag size from a UI Input Field string.
+    /// Link this to your InputField's OnEndEdit or OnValueChanged event.
+    /// </summary>
+    public void UpdateTagSizeFromString(string sizeString)
+    {
+        // Use InvariantCulture so decimals like '0.05' always parse correctly regardless of system language/locale
+        if (float.TryParse(sizeString, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out float newSize))
+        {
+            if (newSize > 0)
+            {
+                tagSizeMeters = newSize;
+                Debug.Log($"[QuestAprilTagTracker] Tag size updated to: {tagSizeMeters} meters.");
+                
+                // Clear old visualizers so they redraw with the new size immediately
+                foreach (var kvp in tagVisualizers)
+                {
+                    if (kvp.Value != null) Destroy(kvp.Value);
+                }
+                tagVisualizers.Clear();
+            }
+            else
+            {
+                Debug.LogWarning("[QuestAprilTagTracker] Tag size must be greater than zero.");
+            }
+        }
+        else
+        {
+            Debug.LogWarning($"[QuestAprilTagTracker] Invalid tag size input: '{sizeString}'. Could not parse to a number.");
+        }
     }
 }

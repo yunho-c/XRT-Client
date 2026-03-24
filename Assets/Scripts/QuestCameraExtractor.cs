@@ -96,6 +96,16 @@ public class QuestCameraExtractor : MonoBehaviour
         }
     }
 
+    void OnApplicationPause(bool isPaused)
+    {
+        if (isPaused)
+        {
+            // If the app pauses (e.g. system keyboard opens), reset the flag so we don't get stuck forever
+            // if Unity drops the GPU readback request without firing the callback.
+            readbackInProgress = false;
+        }
+    }
+
     private unsafe void OnReadbackComplete(AsyncGPUReadbackRequest request)
     {
         readbackInProgress = false;
