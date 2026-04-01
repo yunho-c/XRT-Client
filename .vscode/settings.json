@@ -66,5 +66,5 @@
     "explorer.fileNesting.patterns": {
         "*.sln": "*.csproj"
     },
-    "dotnet.defaultSolution": "XR-Robot-Teleop-Client.sln"
+    "dotnet.defaultSolution": "XRT-Client.slnx"
 }

@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using Newtonsoft.Json;
 
 
 [System.Serializable]
@@ -50,7 +51,7 @@ public class PairedDeviceInfo
 [System.Serializable]
 public class PairedDevicesList
 {
-    [Newtonsoft.Json.JsonProperty] //serializes the private field.
+    [JsonProperty] //serializes the private field.
     private List<PairedDeviceInfo> pairedDevices;
 
 
@@ -150,7 +151,7 @@ public class PairedDevicesList
 
     public string Serialize()
     {
-        return Newtonsoft.Json.JsonConvert.SerializeObject(this, Newtonsoft.Json.Formatting.Indented);
+        return JsonConvert.SerializeObject(this, Formatting.Indented);
     }
 
     /// <summary> Convert a single PairedDeviceInfo json into a valid class </summary>
@@ -158,7 +159,7 @@ public class PairedDevicesList
     /// <returns></returns>
     public static PairedDevicesList Deserialize(string json)
     {
-        PairedDevicesList res = Newtonsoft.Json.JsonConvert.DeserializeObject<PairedDevicesList>(json);
+        PairedDevicesList res = JsonConvert.DeserializeObject<PairedDevicesList>(json);
         return res;
     }
 }

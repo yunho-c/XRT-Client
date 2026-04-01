@@ -42,6 +42,7 @@ public class WebRTCReader : MonoBehaviour
     [Tooltip("Default video server URL (used if no PlayerPrefs saved)")]
     public string defaultVideoServerUrl = "ws://localhost:3000/ws";
 
+
     [Tooltip("Enable to automatically start the WebRTC connection on start")]
     public bool autoStartConnection = false;
 
@@ -309,6 +310,16 @@ public class WebRTCReader : MonoBehaviour
         }
 
         string url = input.Trim();
+
+        // Quick numeric shortcuts for local dev: "1" -> localhost:3000, "2" -> localhost:3001
+        if (url == "1")
+        {
+            return "ws://localhost:3000/ws";
+        }
+        if (url == "2")
+        {
+            return "ws://localhost:3001/ws";
+        }
 
         // If it's already a complete WebSocket URL, return as is
         if (url.StartsWith("ws://") || url.StartsWith("wss://"))

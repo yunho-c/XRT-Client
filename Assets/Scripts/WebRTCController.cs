@@ -32,6 +32,8 @@ public class WebRTCController : MonoBehaviour
   // #if UNITY_ANDROID
   [Tooltip("The BodyPoseProvider to get body pose data from")]
   public BodyPoseProvider bodyPoseProvider;
+  [Tooltip("The AprilTag tracker to get tag pose data from")]
+  public QuestAprilTagTracker aprilTagTracker;
   // #endif
 
   [Header("UI Elements")]
@@ -53,6 +55,7 @@ public class WebRTCController : MonoBehaviour
   private RTCPeerConnection pc;
   private RTCDataChannel cameraChannel;
   private RTCDataChannel bodyPoseChannel;
+  private RTCDataChannel aprilTagChannel;
   private VideoStreamTrack videoTrack;
   private Coroutine _sendBodyPoseCoroutine;
 
@@ -117,6 +120,10 @@ public class WebRTCController : MonoBehaviour
     {
       bodyPoseProvider.OnPoseUpdated += OnBodyPoseUpdated;
     }
+    if (aprilTagTracker != null)
+    {
+      aprilTagTracker.OnTagsDetected += OnAprilTagsDetected;
+    }
     // #endif
   }
 
@@ -126,6 +133,10 @@ public class WebRTCController : MonoBehaviour
     if (bodyPoseProvider != null)
     {
       bodyPoseProvider.OnPoseUpdated -= OnBodyPoseUpdated;
+    }
+    if (aprilTagTracker != null)
+    {
+      aprilTagTracker.OnTagsDetected -= OnAprilTagsDetected;
     }
     if (_sendBodyPoseCoroutine != null)
     {
@@ -180,6 +191,11 @@ public class WebRTCController : MonoBehaviour
     {
       bodyPoseChannel.Close();
       bodyPoseChannel = null;
+    }
+    if (aprilTagChannel != null)
+    {
+      aprilTagChannel.Close();
+      aprilTagChannel = null;
     }
     if (videoTrack != null)
     {
@@ -257,6 +273,31 @@ public void ToggleVideoStream(bool isOn)
       }
     }
   }
+
+  private void OnAprilTagsDetected(QuestAprilTagTracker.TagResult[] tags)
+  {
+      if (aprilTagChannel != null && aprilTagChannel.ReadyState == RTCDataChannelState.Open)
+      {
+          if (tags == null || tags.Length == 0)
+          {
+              // Option A: Could send an empty payload to indicate no tags, 
+              // or Option B: just drop the frame. We will send empty sequence so the receiver knows the tag is lost.
+              byte[] emptyData = SerializeAprilTagData(new QuestAprilTagTracker.TagResult[0]);
+              if (aprilTagChannel.BufferedAmount < HIGH_WATER_MARK)
+              {
+                  aprilTagChannel.Send(emptyData);
+              }
+              return;
+          }
+
+          byte[] binaryData = SerializeAprilTagData(tags);
+          if (binaryData != null && aprilTagChannel.BufferedAmount < HIGH_WATER_MARK)
+          {
+              aprilTagChannel.Send(binaryData);
+          }
+      }
+  }
+
   // #endif
 
   private IEnumerator StartWebRTC()
@@ -283,6 +324,9 @@ public void ToggleVideoStream(bool isOn)
     };
     bodyPoseChannel = pc.CreateDataChannel("body_pose", bodyPoseChannelOptions);
     SetupBodyPoseDataChannel(bodyPoseChannel);
+
+    aprilTagChannel = pc.CreateDataChannel("apriltag_pose", bodyPoseChannelOptions);
+    SetupDataChannelEvents(aprilTagChannel);
 
     // Create offer
     var offer = pc.CreateOffer();
@@ -363,6 +407,11 @@ public void ToggleVideoStream(bool isOn)
         bodyPoseChannel = channel;
         SetupBodyPoseDataChannel(channel);
 
+      }
+      else if (channel.Label == "apriltag_pose")
+      {
+        aprilTagChannel = channel;
+        SetupDataChannelEvents(channel);
       }
       else if (channel.Label == "haptics")
       {
@@ -511,6 +560,31 @@ public void ToggleVideoStream(bool isOn)
           writer.Write(bone.rotation.y);
           writer.Write(bone.rotation.z);
           writer.Write(bone.rotation.w);
+        }
+      }
+      return memoryStream.ToArray();
+    }
+  }
+
+  private byte[] SerializeAprilTagData(QuestAprilTagTracker.TagResult[] tags)
+  {
+    using (var memoryStream = new MemoryStream())
+    {
+      using (var writer = new BinaryWriter(memoryStream))
+      {
+        writer.Write(tags.Length);
+        foreach (var tag in tags)
+        {
+          writer.Write((int)tag.id);
+
+          writer.Write(tag.position.x);
+          writer.Write(tag.position.y);
+          writer.Write(tag.position.z);
+
+          writer.Write(tag.rotation.x);
+          writer.Write(tag.rotation.y);
+          writer.Write(tag.rotation.z);
+          writer.Write(tag.rotation.w);
         }
       }
       return memoryStream.ToArray();

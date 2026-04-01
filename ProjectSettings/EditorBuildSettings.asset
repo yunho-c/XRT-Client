@@ -8,8 +8,16 @@ EditorBuildSettings:
   - enabled: 1
     path: Assets/Scenes/MainScene.unity
     guid: 99c9720ab356a0642a771bea13969a05
+  - enabled: 1
+    path: Assets/Scenes/ZED.unity
+    guid: a489cc821c287944596ccc6449f9cbe0
+  - enabled: 1
+    path: Assets/Scenes/ZEDv2.unity
+    guid: cea38b1e85a3bb14893130ea182615b4
   m_configObjects:
+    Unity.XR.Oculus.Settings: {fileID: 11400000, guid: a9abd6805ec0f5e42a9d401d7fd4c348, type: 2}
     com.unity.input.settings.actions: {fileID: -944628639613478452, guid: 052faaac586de48259a63d0c4782560b, type: 3}
+    com.unity.xr.arfoundation.simulation_settings: {fileID: 11400000, guid: a10a597f43190aa4cacf6e202df50e36, type: 2}
     com.unity.xr.management.loader_settings: {fileID: 11400000, guid: 5b3bd4749957fa8409b381bbc57693e9, type: 2}
     com.unity.xr.openxr.settings4: {fileID: 11400000, guid: ba2956e586b5d1a4a80189b28724791f, type: 2}
   m_UseUCBPForAssetBundles: 1
