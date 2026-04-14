@@ -9,7 +9,7 @@ using TMPro;
 public class QuestAprilTagTracker : MonoBehaviour
 {
     [Header("Tracking Settings")]
-    public float tagSizeMeters = 0.05f; // Size of the tag in meters
+    public float tagSizeMeters = 0.0784f; // Size of the tag in meters
     [Tooltip("Optional: Assign a TextMeshPro Input Field to automatically display the initial tag size.")]
     public TMP_InputField sizeInputField;
 

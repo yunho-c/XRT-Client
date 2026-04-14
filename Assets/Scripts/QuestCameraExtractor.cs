@@ -76,9 +76,8 @@ public class QuestCameraExtractor : MonoBehaviour
                 
                 // Quest camera textures often can't be read directly (ExternalOES). 
                 // We must blit to a temporary RenderTexture first to ensure readback succeeds.
-                // WE SCALE BY 0.5 TO BOOST APRILTAG PERFORMANCE
-                int targetWidth = tex.width / 2;
-                int targetHeight = tex.height / 2;
+                int targetWidth = tex.width;
+                int targetHeight = tex.height;
 
                 if (tempRenderTexture == null || tempRenderTexture.width != targetWidth || tempRenderTexture.height != targetHeight)
                 {
@@ -141,17 +140,16 @@ public class QuestCameraExtractor : MonoBehaviour
 
         // Extract camera intrinsics
         var intrinsics = cameraAccess.Intrinsics;
-        // Divide by 2 because we downsampled the texture by half in the RenderTexture!
-        double fx = intrinsics.FocalLength[0] / 2.0;
-        double fy = intrinsics.FocalLength[1] / 2.0;
-        double cx = intrinsics.PrincipalPoint[0] / 2.0;
-        double cy = intrinsics.PrincipalPoint[1] / 2.0;
+        double fx = intrinsics.FocalLength[0];
+        double fy = intrinsics.FocalLength[1];
+        double cx = intrinsics.PrincipalPoint[0];
+        double cy = intrinsics.PrincipalPoint[1];
 
         // Extrapolate center offset if intrinsics default to 0 due to API latency
-        if (fx == 0) fx = 250.0;
-        if (fy == 0) fy = 250.0;
-        if (cx == 0) cx = width / 2.0;
-        if (cy == 0) cy = height / 2.0;
+        if (fx == 0) fx = 867.0839;
+        if (fy == 0) fy = 867.0839;
+        if (cx == 0) cx = 642.3784;
+        if (cy == 0) cy = 643.5328;
 
         // Fetch precise spatial camera pose at the exact capture timestamp
         Pose cameraPose = cameraAccess.GetCameraPose();
