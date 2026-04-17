@@ -1,10 +1,11 @@
 {
   "dependencies": {
     "com.endel.nativewebsocket": "https://github.com/endel/NativeWebSocket.git#upm",
-    "com.meta.xr.sdk.core": "85.0.0",
     "com.meta.xr.mrutilitykit": "85.0.0",
+    "com.meta.xr.sdk.core": "85.0.0",
     "com.meta.xr.sdk.interaction.ovr": "85.0.0",
     "com.meta.xr.sdk.movement": "https://github.com/oculus-samples/Unity-Movement.git",
+    "com.stereolabs.zed": "https://github.com/stereolabs/zed-unity.git?path=/ZEDCamera/Assets",
     "com.unity.2d.sprite": "1.0.0",
     "com.unity.ai.navigation": "2.0.11",
     "com.unity.collab-proxy": "2.11.4",
@@ -58,4 +59,3 @@
     "com.unity.modules.xr": "1.0.0"
   }
 }
-

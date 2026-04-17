@@ -57,6 +57,18 @@
       },
       "hash": "d3b89c847dbcff03d0e318e570785d149238ad80"
     },
+    "com.stereolabs.zed": {
+      "version": "https://github.com/stereolabs/zed-unity.git?path=/ZEDCamera/Assets",
+      "depth": 0,
+      "source": "git",
+      "dependencies": {
+        "com.unity.xr.management": "4.4.0",
+        "com.unity.ugui": "1.0.0",
+        "com.unity.modules.animation": "1.0.0",
+        "com.unity.modules.imageconversion": "1.0.0"
+      },
+      "hash": "f74573761146966f3ce175ec8b76523765796aba"
+    },
     "com.unity.2d.sprite": {
       "version": "1.0.0",
       "depth": 0,
