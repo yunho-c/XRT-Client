@@ -6,10 +6,23 @@ using Bhaptics.SDK2;
 
 /// <summary>
 /// Receives haptic messages from WebRTC and sends them to bHaptics gloves.
-/// Maps 0-1 values from WebRTC messages to 0-100 intensity and vibration frequency.
+///
+/// Supported hand sensor types:
+///   Psyonic  – original format; values already 0-1, linear intensity mapping.
+///   Inspire  – Inspire RH56DFTP touch sensor averages normalized to 0-1 on the
+///              Python side (HAPTICS_SENSOR_MAX = 1024). A power curve
+///              (inspireIntensityPower < 1) lifts faint contacts so light touches
+///              are perceptible through the glove, and separate pulse duration
+///              limits give a crisper feel suited to the faster Inspire sensor.
 /// </summary>
 public class WebRTCHapticReceiver : MonoBehaviour
 {
+    public enum HandSensorType { Psyonic, Inspire }
+
+    [Header("Hand Sensor Type")]
+    [Tooltip("Select the robot hand whose sensor data is being streamed.")]
+    public HandSensorType handSensorType = HandSensorType.Inspire;
+
     [Header("WebRTC Integration")]
     [Tooltip("Reference to WebRTCController to access data channels. Auto-detected if not assigned.")]
     public WebRTCController webRTCController;
@@ -21,21 +34,40 @@ public class WebRTCHapticReceiver : MonoBehaviour
     [Tooltip("The bHaptics Physics Glove component. Leave null to use singleton instance.")]
     public BhapticsPhysicsGlove bHapticsGlove;
 
-    [Header("Haptic Mapping Settings")]
-    [Tooltip("Minimum haptic pulse duration in milliseconds (for high frequency)")]
+    [Header("Psyonic Haptic Mapping")]
+    [Tooltip("Min pulse duration ms (Psyonic, high frequency)")]
     [Range(10, 100)]
     public int minPulseDurationMs = 20;
 
-    [Tooltip("Maximum haptic pulse duration in milliseconds (for low frequency)")]
+    [Tooltip("Max pulse duration ms (Psyonic, low frequency)")]
     [Range(50, 500)]
     public int maxPulseDurationMs = 200;
 
-    [Tooltip("Enable continuous haptic updates (sends haptics every frame when values change)")]
-    public bool enableContinuousHaptics = true;
-
-    [Tooltip("Minimum intensity threshold (0-1). Values below this won't trigger haptics.")]
+    [Tooltip("Minimum intensity threshold (0-1) for Psyonic. Values below this won't trigger haptics.")]
     [Range(0f, 0.1f)]
     public float minIntensityThreshold = 0.01f;
+
+    [Header("Inspire Haptic Mapping")]
+    [Tooltip("Power-curve exponent applied to Inspire 0-1 values before mapping to intensity.\n" +
+             "Values < 1 boost faint contacts (e.g. 0.5 = sqrt). 1 = linear (same as Psyonic).")]
+    [Range(0.1f, 1f)]
+    public float inspireIntensityPower = 0.5f;
+
+    [Tooltip("Min pulse duration ms (Inspire, high frequency)")]
+    [Range(10, 100)]
+    public int inspireMinPulseDurationMs = 15;
+
+    [Tooltip("Max pulse duration ms (Inspire, low frequency)")]
+    [Range(50, 500)]
+    public int inspireMaxPulseDurationMs = 150;
+
+    [Tooltip("Minimum intensity threshold (0-1) for Inspire touch sensors.")]
+    [Range(0f, 0.1f)]
+    public float inspireMinIntensityThreshold = 0.02f;
+
+    [Header("Common Settings")]
+    [Tooltip("Enable continuous haptic updates (sends haptics every frame when values change)")]
+    public bool enableContinuousHaptics = true;
 
     [Header("Timeout Settings")]
     [Tooltip("Timeout in seconds. If no haptic messages are received within this time, haptics will stop.")]
@@ -302,17 +334,21 @@ public class WebRTCHapticReceiver : MonoBehaviour
 
     /// <summary>
     /// Sends haptic feedback for a specific hand.
-    /// Maps 0-1 values to 0-100 intensity and uses frequency to determine pulse duration.
+    /// Branches on handSensorType to apply the appropriate intensity curve and pulse parameters.
     /// </summary>
     void SendHapticsForHand(bool isLeft, HapticData hapticData)
     {
         if (bHapticsGlove == null || hapticData == null)
             return;
 
+        bool isInspire = handSensorType == HandSensorType.Inspire;
+        float threshold  = isInspire ? inspireMinIntensityThreshold : minIntensityThreshold;
+        int   minPulse   = isInspire ? inspireMinPulseDurationMs    : minPulseDurationMs;
+        int   maxPulse   = isInspire ? inspireMaxPulseDurationMs    : maxPulseDurationMs;
+
         // Create motor array (6 motors: thumb, index, middle, ring, little, wrist/palm)
         int[] motors = new int[6];
 
-        // Map finger values (0-1) to intensity (0-100)
         float[] fingerValues = new float[]
         {
             hapticData.thumb,
@@ -323,16 +359,14 @@ public class WebRTCHapticReceiver : MonoBehaviour
             hapticData.palm
         };
 
-        float maxFrequency = 0f;
+        float maxMapped = 0f;
         bool hasActiveHaptics = false;
 
-        // Calculate intensity for each finger and find max frequency
         for (int i = 0; i < fingerValues.Length && i < motors.Length; i++)
         {
-            float value = fingerValues[i];
+            float value = Mathf.Clamp01(fingerValues[i]);
 
-            // Skip if below threshold
-            if (value < minIntensityThreshold)
+            if (value < threshold)
             {
                 motors[i] = 0;
                 continue;
@@ -340,37 +374,32 @@ public class WebRTCHapticReceiver : MonoBehaviour
 
             hasActiveHaptics = true;
 
-            // Map 0-1 to 0-100 intensity (linear mapping)
-            float intensity = Mathf.Clamp01(value) * 100f;
-            motors[i] = Mathf.RoundToInt(intensity);
-
-            // Track max frequency for duration calculation
-            maxFrequency = Mathf.Max(maxFrequency, value);
+            // Apply power curve for Inspire to boost faint contacts.
+            float mapped = isInspire ? Mathf.Pow(value, inspireIntensityPower) : value;
+            motors[i] = Mathf.RoundToInt(mapped * 100f);
+            maxMapped = Mathf.Max(maxMapped, mapped);
         }
 
-        // Only send if there are active haptics
         if (!hasActiveHaptics)
             return;
 
-        // Map max frequency (0-1) to pulse duration (inverse: higher value = higher frequency = shorter duration)
-        // Higher frequency means faster vibration = shorter pulse duration
-        float normalizedFrequency = Mathf.Clamp01(maxFrequency);
+        // Higher mapped value → higher frequency → shorter pulse duration.
+        float normalizedFrequency = Mathf.Clamp01(maxMapped);
         int durationMs = Mathf.RoundToInt(
-            maxPulseDurationMs - (normalizedFrequency * (maxPulseDurationMs - minPulseDurationMs))
+            maxPulse - (normalizedFrequency * (maxPulse - minPulse))
         );
 
         // Position: 8 = GloveL, 9 = GloveR
-        int position = isLeft ? 8 : 9; // PositionType.GloveL = 8, GloveR = 9
+        int position = isLeft ? 8 : 9;
 
-        // Send haptic pulse for all fingers at once
         try
         {
             BhapticsLibrary.PlayMotors(position, motors, durationMs);
-            
+
             if (showDebugLogs)
             {
                 string handName = isLeft ? "Left" : "Right";
-                Debug.Log($"[WebRTCHapticReceiver] Sent haptics to {handName} hand - Thumb:{motors[0]}, Index:{motors[1]}, Middle:{motors[2]}, Ring:{motors[3]}, Little:{motors[4]}, Palm:{motors[5]} (duration: {durationMs}ms)");
+                Debug.Log($"[WebRTCHapticReceiver] [{handSensorType}] {handName} – Thumb:{motors[0]} Index:{motors[1]} Middle:{motors[2]} Ring:{motors[3]} Little:{motors[4]} Palm:{motors[5]} ({durationMs}ms)");
             }
         }
         catch (System.Exception e)
