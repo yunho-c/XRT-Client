@@ -144,7 +144,19 @@ public class BHapticsFingertipHaptics : MonoBehaviour
     public bool showDebugLogs = false;
 
     [Tooltip("Track which functions are called (for code cleanup - remove unused functions)")]
-    public bool trackFunctionCalls = true;
+    public bool trackFunctionCalls = false;
+
+    [Header("Crash Safety")]
+    [Tooltip("Delay enabling fingertip colliders after skeleton initialization. Helps avoid connect-time trigger storms.")]
+    [Range(0f, 5f)]
+    public float colliderEnableDelaySeconds = 1.0f;
+
+    [Tooltip("Delay bHaptics output after startup to avoid plugin init races during headset connect.")]
+    [Range(0f, 5f)]
+    public float hapticStartupDelaySeconds = 1.5f;
+
+    [Tooltip("Master switch for bHaptics output calls.")]
+    public bool enableHapticOutput = true;
 
     // Fingertip references and colliders
     private Transform[] fingertipTransforms = new Transform[5]; // Thumb, Index, Middle, Ring, Pinky
@@ -196,9 +208,12 @@ public class BHapticsFingertipHaptics : MonoBehaviour
         "Thumb", "Index", "Middle", "Ring", "Pinky"
     };
 
+    private float _hapticsAllowedAfterTime;
+
     void Start()
     {
         if (trackFunctionCalls) Debug.Log("[FUNCTION_TRACKER] Start() called");
+        _hapticsAllowedAfterTime = Time.time + hapticStartupDelaySeconds;
         InitializeComponents();
         FindPokeInteractor();
         FindRayInteractor();
@@ -1303,6 +1318,10 @@ public class BHapticsFingertipHaptics : MonoBehaviour
         }
 
         SetupFingertipColliders(jointTransforms);
+        if (colliderEnableDelaySeconds > 0f)
+        {
+            StartCoroutine(EnableFingertipCollidersAfterDelay());
+        }
 
         // Update Inspector fields to show what was found
         UpdateInspectorFields();
@@ -1457,6 +1476,7 @@ public class BHapticsFingertipHaptics : MonoBehaviour
                 collider.radius = colliderRadius;
                 collider.isTrigger = isTrigger;
                 collider.center = Vector3.zero; // Center at the fingertip transform
+                collider.enabled = colliderEnableDelaySeconds <= 0f;
 
                 // Ensure the GameObject has a Rigidbody for trigger detection to work reliably
                 // (Triggers need at least one Rigidbody in the collision pair)
@@ -1650,6 +1670,26 @@ public class BHapticsFingertipHaptics : MonoBehaviour
                     }
                 }
             }
+        }
+    }
+
+    System.Collections.IEnumerator EnableFingertipCollidersAfterDelay()
+    {
+        if (trackFunctionCalls) Debug.Log("[FUNCTION_TRACKER] EnableFingertipCollidersAfterDelay() called");
+
+        yield return new WaitForSeconds(colliderEnableDelaySeconds);
+
+        for (int i = 0; i < fingertipColliders.Length; i++)
+        {
+            if (fingertipColliders[i] != null)
+            {
+                fingertipColliders[i].enabled = true;
+            }
+        }
+
+        if (showDebugLogs)
+        {
+            Debug.Log($"[BHapticsFingertipHaptics] Enabled fingertip colliders after {colliderEnableDelaySeconds:F2}s delay ({(isLeftHand ? "Left" : "Right")} hand)");
         }
     }
 
@@ -2127,7 +2167,7 @@ public class BHapticsFingertipHaptics : MonoBehaviour
             {
                 try
                 {
-                    bHapticsGlove.SendEnterHaptic(isLeftHand, bHapticsFingerIndex);
+                    TrySendEnterHapticSafe(bHapticsFingerIndex);
                     
                     if (showDebugLogs && i == 0)
                     {
@@ -2344,10 +2384,10 @@ public class BHapticsFingertipHaptics : MonoBehaviour
                 try
                 {
                     // Send haptic to thumb (fingerIndex 0)
-                    bHapticsGlove.SendEnterHaptic(isLeftHand, thumbIndex);
+                    TrySendEnterHapticSafe(thumbIndex);
                     
                     // Send haptic to index finger (fingerIndex 1)
-                    bHapticsGlove.SendEnterHaptic(isLeftHand, indexIndex);
+                    TrySendEnterHapticSafe(indexIndex);
                     
                     if (showDebugLogs && i == 0)
                     {
@@ -2545,7 +2585,10 @@ public class BHapticsFingertipHaptics : MonoBehaviour
             }
             
             // Send haptic pulse with base intensity (small pulse for initial touch)
-            bHapticsGlove.SendEnterHaptic(isLeftHand, bHapticsFingerIndex);
+            if (!TrySendEnterHapticSafe(bHapticsFingerIndex))
+            {
+                return;
+            }
             
             if (showDebugLogs)
             {
@@ -2666,7 +2709,10 @@ public class BHapticsFingertipHaptics : MonoBehaviour
             // Send haptic pulse
             // If velocity is high, we could send multiple pulses for stronger effect
             // For now, we'll send a single pulse but the intensity calculation accounts for velocity
-            bHapticsGlove.SendEnterHaptic(isLeftHand, bHapticsFingerIndex);
+            if (!TrySendEnterHapticSafe(bHapticsFingerIndex))
+            {
+                return;
+            }
             
             // Optionally send additional pulses at high velocity for stronger feedback
             if (enableVelocityBasedHaptics && normalizedVelocity > 0.7f)
@@ -2699,7 +2745,7 @@ public class BHapticsFingertipHaptics : MonoBehaviour
         {
             try
             {
-                bHapticsGlove.SendEnterHaptic(isLeftHand, bHapticsFingerIndex);
+                TrySendEnterHapticSafe(bHapticsFingerIndex);
             }
             catch (System.Exception e)
             {
@@ -2722,6 +2768,27 @@ public class BHapticsFingertipHaptics : MonoBehaviour
         // This is now handled by SendButtonPressHapticPulses coroutine
         // Keeping this method for backwards compatibility but it's not used anymore
         StartCoroutine(SendButtonPressHapticPulses(fingerIndex));
+    }
+
+    bool TrySendEnterHapticSafe(int bHapticsFingerIndex)
+    {
+        if (!enableHapticOutput)
+        {
+            return false;
+        }
+
+        if (Time.time < _hapticsAllowedAfterTime)
+        {
+            return false;
+        }
+
+        if (bHapticsGlove == null)
+        {
+            return false;
+        }
+
+        bHapticsGlove.SendEnterHaptic(isLeftHand, bHapticsFingerIndex);
+        return true;
     }
 
     /// <summary>

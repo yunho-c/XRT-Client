@@ -32,6 +32,8 @@ public class WebRTCController : MonoBehaviour
   // #if UNITY_ANDROID
   [Tooltip("The BodyPoseProvider to get body pose data from")]
   public BodyPoseProvider bodyPoseProvider;
+  [Tooltip("Optional fused pose provider. If assigned, this overrides BodyPoseProvider events.")]
+  public PoseFusionRouter poseFusionRouter;
   [Tooltip("The AprilTag tracker to get tag pose data from")]
   public QuestAprilTagTracker aprilTagTracker;
   // #endif
@@ -116,7 +118,11 @@ public class WebRTCController : MonoBehaviour
   void OnEnable()
   {
     // #if UNITY_ANDROID
-    if (bodyPoseProvider != null)
+    if (poseFusionRouter != null)
+    {
+      poseFusionRouter.OnPoseUpdated += OnBodyPoseUpdated;
+    }
+    else if (bodyPoseProvider != null)
     {
       bodyPoseProvider.OnPoseUpdated += OnBodyPoseUpdated;
     }
@@ -130,7 +136,11 @@ public class WebRTCController : MonoBehaviour
   void OnDisable()
   {
     // #if UNITY_ANDROID
-    if (bodyPoseProvider != null)
+    if (poseFusionRouter != null)
+    {
+      poseFusionRouter.OnPoseUpdated -= OnBodyPoseUpdated;
+    }
+    else if (bodyPoseProvider != null)
     {
       bodyPoseProvider.OnPoseUpdated -= OnBodyPoseUpdated;
     }

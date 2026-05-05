@@ -6376,7 +6376,7 @@ MonoBehaviour:
   checkForUIComponents: 1
   excludeHandSkeleton: 1
   showDebugLogs: 0
-  trackFunctionCalls: 1
+  trackFunctionCalls: 0
 --- !u!1 &946098753
 GameObject:
   m_ObjectHideFlags: 0
@@ -8944,7 +8944,7 @@ MonoBehaviour:
   checkForUIComponents: 1
   excludeHandSkeleton: 1
   showDebugLogs: 0
-  trackFunctionCalls: 1
+  trackFunctionCalls: 0
 --- !u!1 &1318195246
 GameObject:
   m_ObjectHideFlags: 0
@@ -11460,6 +11460,11 @@ GameObject:
   - component: {fileID: 1515905724}
   - component: {fileID: 1515905727}
   - component: {fileID: 1515905726}
+  - component: {fileID: 1515905730}
+  - component: {fileID: 1515905729}
+  - component: {fileID: 1515905728}
+  - component: {fileID: 1515905731}
+  - component: {fileID: 1515905732}
   m_Layer: 0
   m_Name: BodyPoseManager
   m_TagString: Untagged
@@ -11480,6 +11485,9 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   enableBallRep: 0
+  enableNativeBodyQueryInEditor: 0
+  emitPoseWhenInvalid: 1
+  invalidPoseWarningInterval: 2
 --- !u!4 &1515905725
 Transform:
   m_ObjectHideFlags: 0
@@ -11523,6 +11531,87 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   logAsJson: 0
   enableLogging: 0
+--- !u!114 &1515905728
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1515905723}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1f55928d3485b98468ae26f52ed54d36, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::PoseFusionRouter
+  questBodyPoseProvider: {fileID: 1515905724}
+  slimeBodyMapper: {fileID: 1515905729}
+  publishOnlyWhenSlimeHealthy: 0
+  useBasePoseWhenLowerBodyTrackersMissing: 1
+--- !u!114 &1515905729
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1515905723}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 92443699198548c40af6ce92e4d6c2de, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::SlimeBodyMapper
+  vmcReceiver: {fileID: 1515905730}
+  headingReference: {fileID: 1187398183}
+  hipHeightMeters: 1
+  floorOffsetMeters: 0
+  smoothingStrength: -0.6
+--- !u!114 &1515905730
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1515905723}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e6c2ae65fc43416408fcb639d2b6114b, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::SlimeVmcReceiver
+  listenPort: 39539
+  acceptAnySourceIp: 1
+  allowedSourceIp: 
+  staleTimeoutSeconds: 0.35
+--- !u!114 &1515905731
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1515905723}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: ece48f62516fc044ab8ad132c406df92, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  poseFusionRouter: {fileID: 1515905728}
+  targetAnimator: {fileID: 0}
+  autoFindStylizedCharacter: 1
+  stylizedCharacterName: StylizedCharacter
+--- !u!114 &1515905732
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1515905723}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b60dca724744db24e8f4d2f934e558bc, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  poseFusionRouter: {fileID: 1515905728}
+  showOverlay: 1
+  fontSize: 24
+  topLeft: {x: 20, y: 20}
 --- !u!1 &1517974059
 GameObject:
   m_ObjectHideFlags: 0
@@ -13274,6 +13363,7 @@ MonoBehaviour:
   serverUrl: mel06293d:8080/offer
   vrCamera: {fileID: 1187398185}
   bodyPoseProvider: {fileID: 1515905724}
+  poseFusionRouter: {fileID: 1515905728}
   aprilTagTracker: {fileID: 1731597646}
   statusText: {fileID: 1350388490}
   videoRenderTexture: {fileID: 8400000, guid: c8114d2dae2a84b3fad9412f0c6a9413, type: 2}

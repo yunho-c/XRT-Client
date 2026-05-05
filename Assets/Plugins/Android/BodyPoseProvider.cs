@@ -37,6 +37,12 @@ public class BodyPoseProvider : MonoBehaviour
     // public MetaSourceDataProvider sourceDataProvider;
     [Tooltip("Switch to enable bone position representation as red balls.")]
     public bool enableBallRep = true;
+    [Tooltip("In Unity Editor, call native body query each frame. Disable to avoid editor-native crashes while testing non-device flows.")]
+    public bool enableNativeBodyQueryInEditor = false;
+    [Tooltip("When true, emits the last known/default pose if Meta body tracking is invalid.")]
+    public bool emitPoseWhenInvalid = true;
+    [Tooltip("Seconds between repeated invalid-pose warnings.")]
+    public float invalidPoseWarningInterval = 2.0f;
     #endregion
 
     #region Public Properties
@@ -50,6 +56,7 @@ public class BodyPoseProvider : MonoBehaviour
     private ISourceDataProvider sourceDataProvider;
     private bool _isInitialized = false;
     private List<GameObject> ballRepObjects = new List<GameObject>();
+    private float _nextInvalidPoseWarningTime = 0f;
     #endregion
 
     #region Events
@@ -88,13 +95,37 @@ public class BodyPoseProvider : MonoBehaviour
             if (!_isInitialized) { return; } // Exit if initialization fails
         }
 
+        // Editor-safe mode: avoid native Meta body polling in Editor play mode.
+        // This keeps downstream systems alive with fallback pose frames.
+#if UNITY_EDITOR
+        if (!enableNativeBodyQueryInEditor)
+        {
+            if (emitPoseWhenInvalid && CurrentPoseData != null)
+            {
+                CurrentPoseData.timestamp = Time.time;
+                OnPoseUpdated?.Invoke(CurrentPoseData);
+            }
+            return;
+        }
+#endif
+
         // 2. FETCH the skeleton pose first. This is the most important change.
         var skeletonPose = sourceDataProvider.GetSkeletonPose();
 
         // 3. NOW check for validity. The flag has been updated by the call above.
         if (!sourceDataProvider.IsPoseValid())
         {
-            Debug.LogWarning("BodyPoseProvider: Body pose is invalid. Waiting for valid data.");
+            if (Time.time >= _nextInvalidPoseWarningTime)
+            {
+                Debug.LogWarning("BodyPoseProvider: Body pose is invalid. Waiting for valid data.");
+                _nextInvalidPoseWarningTime = Time.time + Mathf.Max(0.25f, invalidPoseWarningInterval);
+            }
+
+            if (emitPoseWhenInvalid && CurrentPoseData != null)
+            {
+                CurrentPoseData.timestamp = Time.time;
+                OnPoseUpdated?.Invoke(CurrentPoseData);
+            }
             return; // It's now safe to return, as you've already attempted the fetch.
         }
 

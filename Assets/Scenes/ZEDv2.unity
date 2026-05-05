@@ -6374,7 +6374,7 @@ MonoBehaviour:
   checkForUIComponents: 1
   excludeHandSkeleton: 1
   showDebugLogs: 0
-  trackFunctionCalls: 1
+  trackFunctionCalls: 0
 --- !u!1 &946098753
 GameObject:
   m_ObjectHideFlags: 0
@@ -6590,6 +6590,170 @@ Transform:
   m_Children:
   - {fileID: 2059065683}
   m_Father: {fileID: 94771229}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &967743811
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 967743820}
+  - component: {fileID: 967743819}
+  - component: {fileID: 967743818}
+  - component: {fileID: 967743817}
+  - component: {fileID: 967743816}
+  - component: {fileID: 967743815}
+  - component: {fileID: 967743814}
+  - component: {fileID: 967743813}
+  - component: {fileID: 967743812}
+  m_Layer: 0
+  m_Name: BodyPoseManager
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &967743812
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 967743811}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b60dca724744db24e8f4d2f934e558bc, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  poseFusionRouter: {fileID: 967743814}
+  logOnModeChange: 1
+  logHeartbeat: 0
+  heartbeatIntervalSeconds: 2
+--- !u!114 &967743813
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 967743811}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: ece48f62516fc044ab8ad132c406df92, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  poseFusionRouter: {fileID: 967743814}
+  targetAnimator: {fileID: 0}
+  autoFindStylizedCharacter: 1
+  stylizedCharacterName: StylizedCharacter
+--- !u!114 &967743814
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 967743811}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1f55928d3485b98468ae26f52ed54d36, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::PoseFusionRouter
+  questBodyPoseProvider: {fileID: 967743819}
+  slimeBodyMapper: {fileID: 967743815}
+  publishOnlyWhenSlimeHealthy: 0
+  useBasePoseWhenLowerBodyTrackersMissing: 1
+--- !u!114 &967743815
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 967743811}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 92443699198548c40af6ce92e4d6c2de, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::SlimeBodyMapper
+  vmcReceiver: {fileID: 967743816}
+  headingReference: {fileID: 0}
+  hipHeightMeters: 1
+  floorOffsetMeters: 0
+  smoothingStrength: -0.6
+--- !u!114 &967743816
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 967743811}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e6c2ae65fc43416408fcb639d2b6114b, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::SlimeVmcReceiver
+  listenPort: 39539
+  acceptAnySourceIp: 1
+  allowedSourceIp: 
+  staleTimeoutSeconds: 0.35
+--- !u!114 &967743817
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 967743811}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: be3ebb6547662534aaef8337c5627f3b, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  _providedSkeletonType: 1
+  _validBodyTrackingDelay: 0.01
+--- !u!114 &967743818
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 967743811}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 0e987291b65d2874e9df0ec2d2db3053, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  logAsJson: 0
+  enableLogging: 0
+--- !u!114 &967743819
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 967743811}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 2ae5c6a28c978834da9d9da1b75fa7a9, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  enableBallRep: 0
+  enableNativeBodyQueryInEditor: 0
+  emitPoseWhenInvalid: 1
+  invalidPoseWarningInterval: 2
+--- !u!4 &967743820
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 967743811}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: -2.63698, y: 0, z: 1.82065}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!114 &971321898 stripped
 MonoBehaviour:
@@ -7262,6 +7426,10 @@ PrefabInstance:
     - target: {fileID: 799039179778274349, guid: 595656f9f1b2ad346bbcb73a4117a02e, type: 3}
       propertyPath: m_Name
       value: '[bhaptics]'
+      objectReference: {fileID: 0}
+    - target: {fileID: 799039179778274349, guid: 595656f9f1b2ad346bbcb73a4117a02e, type: 3}
+      propertyPath: m_IsActive
+      value: 1
       objectReference: {fileID: 0}
     - target: {fileID: 6013831099658930320, guid: 595656f9f1b2ad346bbcb73a4117a02e, type: 3}
       propertyPath: m_LocalPosition.x
@@ -8923,7 +9091,7 @@ MonoBehaviour:
   checkForUIComponents: 1
   excludeHandSkeleton: 1
   showDebugLogs: 0
-  trackFunctionCalls: 1
+  trackFunctionCalls: 0
 --- !u!1 &1318195246
 GameObject:
   m_ObjectHideFlags: 0
@@ -10717,6 +10885,10 @@ PrefabInstance:
       propertyPath: m_Name
       value: '[bHapticsGlove]'
       objectReference: {fileID: 0}
+    - target: {fileID: 5259986588919626442, guid: bb7dcf67defb7d842853b66e812e4e2e, type: 3}
+      propertyPath: m_IsActive
+      value: 1
+      objectReference: {fileID: 0}
     - target: {fileID: 7164154133280127851, guid: bb7dcf67defb7d842853b66e812e4e2e, type: 3}
       propertyPath: m_LocalPosition.x
       value: 0.11788
@@ -11299,81 +11471,6 @@ Transform:
   m_Children: []
   m_Father: {fileID: 760105227}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!1 &1515905723
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 1515905725}
-  - component: {fileID: 1515905724}
-  - component: {fileID: 1515905727}
-  - component: {fileID: 1515905726}
-  m_Layer: 0
-  m_Name: BodyPoseManager
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!114 &1515905724
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1515905723}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 2ae5c6a28c978834da9d9da1b75fa7a9, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  enableBallRep: 0
---- !u!4 &1515905725
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1515905723}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: -2.63698, y: 0, z: 1.82065}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!114 &1515905726
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1515905723}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: be3ebb6547662534aaef8337c5627f3b, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  _providedSkeletonType: 1
-  _validBodyTrackingDelay: 0.01
---- !u!114 &1515905727
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1515905723}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 0e987291b65d2874e9df0ec2d2db3053, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  logAsJson: 0
-  enableLogging: 0
 --- !u!1 &1517974059
 GameObject:
   m_ObjectHideFlags: 0
@@ -13035,7 +13132,9 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   serverUrl: mel06293d:8080/offer
   vrCamera: {fileID: 1187398185}
-  bodyPoseProvider: {fileID: 1515905724}
+  bodyPoseProvider: {fileID: 0}
+  poseFusionRouter: {fileID: 0}
+  aprilTagTracker: {fileID: 0}
   statusText: {fileID: 1350388490}
   videoRenderTexture: {fileID: 8400000, guid: c8114d2dae2a84b3fad9412f0c6a9413, type: 2}
   videoMaterial: {fileID: 2100000, guid: 5e1d5e7379e114ad49a9cd559f359d8d, type: 2}
@@ -15241,7 +15340,7 @@ SceneRoots:
   - {fileID: 584502315}
   - {fileID: 1439434993}
   - {fileID: 597892399}
-  - {fileID: 1515905725}
+  - {fileID: 967743820}
   - {fileID: 1746223497}
   - {fileID: 410087041}
   - {fileID: 832575519}
