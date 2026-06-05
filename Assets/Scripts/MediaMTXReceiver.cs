@@ -10,7 +10,7 @@ public class MediaMTXReceiver : MonoBehaviour
     public bool autoStartConnection = false;
 
     // Base address for user input (e.g., "localhost:8889/stream" or "192.168.0.101:8889/zed")
-    [SerializeField] private string defaultBaseAddress = "192.168.0.101:8889/zed";
+    [SerializeField] private string defaultBaseAddress = "192.168.0.104:8889/zed";
 
     [Header("UI Elements")]
     // Reference to the InputField (to load the saved URL)

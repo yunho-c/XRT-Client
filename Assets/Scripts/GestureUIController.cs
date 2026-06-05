@@ -5,16 +5,25 @@ public class GestureUIController : MonoBehaviour
 {
     [SerializeField] private GameObject uiPanel; // Reference to your CanvasRoot
     [SerializeField] private bool toggleMode = true; // Toggle on/off or show while gesture active
-    
+
     [Header("Audio")]
     [SerializeField] private AudioSource audioSource;
     [SerializeField] private AudioClip gestureDetectedSound;
     [SerializeField] private AudioClip gestureLostSound; // Optional
 
+    [Header("Cooldown")]
+    [SerializeField] private float detectionCooldown = 1.0f;
+
     private bool isUIVisible = true; // UI visible by default
+    private float lastDetectionTime = float.NegativeInfinity;
 
     public void OnGestureDetected()
     {
+        if (Time.time - lastDetectionTime < detectionCooldown)
+            return;
+
+        lastDetectionTime = Time.time;
+
         // Play sound when gesture is detected
         PlaySound(gestureDetectedSound);
         

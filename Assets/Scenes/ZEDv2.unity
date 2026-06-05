@@ -1623,6 +1623,7 @@ GameObject:
   - component: {fileID: 255038647}
   - component: {fileID: 255038646}
   - component: {fileID: 255038650}
+  - component: {fileID: 255038651}
   m_Layer: 0
   m_Name: VideoStreamingViewport
   m_TagString: Untagged
@@ -1639,8 +1640,8 @@ Transform:
   m_GameObject: {fileID: 255038644}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 1}
-  m_LocalScale: {x: 1.78, y: 1, z: 1}
+  m_LocalPosition: {x: -0, y: -0, z: 0.11}
+  m_LocalScale: {x: 0.3912174, y: 0.22, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 1187398183}
@@ -1692,7 +1693,7 @@ MeshRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 2100000, guid: 379724b476f755f48b45d0d16b389716, type: 2}
+  - {fileID: 2100000, guid: 0a7cd0a4620374a459e1a5a5d2d430ac, type: 2}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
@@ -1737,13 +1738,30 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   autoStartConnection: 0
-  defaultBaseAddress: 192.168.0.101:8889/zed
+  defaultBaseAddress: 192.168.0.104:8889/zed
   ipAddressInputField: {fileID: 1350388493}
   statusText: {fileID: 1350388492}
   connectToggle: {fileID: 1350388491}
-  stereoMaterial: {fileID: 2100000, guid: 379724b476f755f48b45d0d16b389716, type: 2}
+  stereoMaterial: {fileID: 2100000, guid: 0a7cd0a4620374a459e1a5a5d2d430ac, type: 2}
   stereoDisplayObject: {fileID: 255038644}
   videoStreamVisible: 1
+--- !u!114 &255038651
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 255038644}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 5ec11d61f06c324429052e3cfd9f1e8b, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::ZEDFOVFiller
+  zedHorizontalFOV: 90
+  zedVerticalFOV: 60
+  fillMode: 0
+  flipY: 0
+  ipdShift: 0.13
 --- !u!1 &255424862
 GameObject:
   m_ObjectHideFlags: 0
@@ -7303,6 +7321,10 @@ PrefabInstance:
       propertyPath: m_LocalEulerAnglesHint.z
       value: 0
       objectReference: {fileID: 0}
+    - target: {fileID: 9185927945476364242, guid: 595656f9f1b2ad346bbcb73a4117a02e, type: 3}
+      propertyPath: autoRunBhapticsPlayer
+      value: 1
+      objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []
     m_AddedGameObjects: []
@@ -7339,6 +7361,63 @@ Transform:
   m_Children: []
   m_Father: {fileID: 2035447142}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &1071099212 stripped
+GameObject:
+  m_CorrespondingSourceObject: {fileID: 9217152344612217286, guid: c029aaa7511b7274cac15786f950078f, type: 3}
+  m_PrefabInstance: {fileID: 1553805726}
+  m_PrefabAsset: {fileID: 0}
+--- !u!114 &1071099215
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1071099212}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b415a3a964e217e4aa55d35da3ab1ae8, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::WebRTCHapticReceiver
+  handSensorType: 1
+  webRTCController: {fileID: 1746223496}
+  hapticsChannelName: haptics
+  enableUdpDebugInput: 1
+  udpDebugPort: 8765
+  bHapticsGlove: {fileID: 1556650707}
+  sensorFloorNormalized: 0.05
+  sensorSaturationNormalized: 0.9
+  enableContinuousLogMapping: 0
+  alpha: 3
+  inspireIntensityPower: 0.5
+  maxAmplitude: 40
+  thumbLowerThreshold: 5
+  indexLowerThreshold: 5
+  middleLowerThreshold: 5
+  ringLowerThreshold: 5
+  littleLowerThreshold: 5
+  palmLowerThreshold: 5
+  thresholdMargin: 2
+  enableTransitionPulse: 1
+  lightLevelCutoff: 0.1
+  mediumLevelCutoff: 0.35
+  highLevelCutoff: 0.6
+  maximumLevelCutoff: 0.85
+  lightKickIntensity: 10
+  mediumKickIntensity: 25
+  highKickIntensity: 50
+  maximumKickIntensity: 70
+  lightPulseCount: 1
+  mediumPulseCount: 1
+  highPulseCount: 1
+  maximumPulseCount: 2
+  transitionPulseDurationMs: 20
+  interPulseGapMs: 25
+  kickOnDownwardTransitions: 1
+  continuousCommandDurationMs: 5
+  enableContinuousHaptics: 0
+  messageTimeoutSeconds: 1
+  enableTimeout: 1
+  showDebugLogs: 1
 --- !u!1 &1080122530
 GameObject:
   m_ObjectHideFlags: 0
@@ -9194,11 +9273,11 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 467163313993049223, guid: 4b97ac8c74f3dc440842829c03f62e37, type: 3}
       propertyPath: m_AnchorMax.y
-      value: 0
+      value: 1
       objectReference: {fileID: 0}
     - target: {fileID: 467163313993049223, guid: 4b97ac8c74f3dc440842829c03f62e37, type: 3}
       propertyPath: m_AnchorMin.y
-      value: 0
+      value: 1
       objectReference: {fileID: 0}
     - target: {fileID: 467163313993049223, guid: 4b97ac8c74f3dc440842829c03f62e37, type: 3}
       propertyPath: m_LocalPosition.z
@@ -9206,11 +9285,11 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 467163313993049223, guid: 4b97ac8c74f3dc440842829c03f62e37, type: 3}
       propertyPath: m_AnchoredPosition.x
-      value: 0
+      value: 249
       objectReference: {fileID: 0}
     - target: {fileID: 467163313993049223, guid: 4b97ac8c74f3dc440842829c03f62e37, type: 3}
       propertyPath: m_AnchoredPosition.y
-      value: 0
+      value: -122
       objectReference: {fileID: 0}
     - target: {fileID: 633345792003407783, guid: 4b97ac8c74f3dc440842829c03f62e37, type: 3}
       propertyPath: onValueChanged.m_PersistentCalls.m_Calls.Array.size
@@ -9274,11 +9353,11 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 1350326622021526796, guid: 4b97ac8c74f3dc440842829c03f62e37, type: 3}
       propertyPath: m_AnchorMax.y
-      value: 0
+      value: 1
       objectReference: {fileID: 0}
     - target: {fileID: 1350326622021526796, guid: 4b97ac8c74f3dc440842829c03f62e37, type: 3}
       propertyPath: m_AnchorMin.y
-      value: 0
+      value: 1
       objectReference: {fileID: 0}
     - target: {fileID: 1350326622021526796, guid: 4b97ac8c74f3dc440842829c03f62e37, type: 3}
       propertyPath: m_LocalPosition.z
@@ -9286,11 +9365,11 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 1350326622021526796, guid: 4b97ac8c74f3dc440842829c03f62e37, type: 3}
       propertyPath: m_AnchoredPosition.x
-      value: 0
+      value: 249
       objectReference: {fileID: 0}
     - target: {fileID: 1350326622021526796, guid: 4b97ac8c74f3dc440842829c03f62e37, type: 3}
       propertyPath: m_AnchoredPosition.y
-      value: 0
+      value: -190
       objectReference: {fileID: 0}
     - target: {fileID: 1414141042368151587, guid: 4b97ac8c74f3dc440842829c03f62e37, type: 3}
       propertyPath: m_Layer
@@ -9610,7 +9689,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 5150600605084912330, guid: 4b97ac8c74f3dc440842829c03f62e37, type: 3}
       propertyPath: _size.y
-      value: 1300
+      value: 1442.1
       objectReference: {fileID: 0}
     - target: {fileID: 5155732847258778663, guid: 4b97ac8c74f3dc440842829c03f62e37, type: 3}
       propertyPath: m_AnchorMax.y
@@ -9630,11 +9709,11 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 5168163690850311705, guid: 4b97ac8c74f3dc440842829c03f62e37, type: 3}
       propertyPath: m_AnchorMax.y
-      value: 0
+      value: 1
       objectReference: {fileID: 0}
     - target: {fileID: 5168163690850311705, guid: 4b97ac8c74f3dc440842829c03f62e37, type: 3}
       propertyPath: m_AnchorMin.y
-      value: 0
+      value: 1
       objectReference: {fileID: 0}
     - target: {fileID: 5168163690850311705, guid: 4b97ac8c74f3dc440842829c03f62e37, type: 3}
       propertyPath: m_LocalPosition.z
@@ -9642,11 +9721,11 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 5168163690850311705, guid: 4b97ac8c74f3dc440842829c03f62e37, type: 3}
       propertyPath: m_AnchoredPosition.x
-      value: 0
+      value: 249
       objectReference: {fileID: 0}
     - target: {fileID: 5168163690850311705, guid: 4b97ac8c74f3dc440842829c03f62e37, type: 3}
       propertyPath: m_AnchoredPosition.y
-      value: 0
+      value: -54
       objectReference: {fileID: 0}
     - target: {fileID: 5223243284369794909, guid: 4b97ac8c74f3dc440842829c03f62e37, type: 3}
       propertyPath: m_Layer
@@ -10061,9 +10140,17 @@ PrefabInstance:
       value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 8669094407375672109, guid: 4b97ac8c74f3dc440842829c03f62e37, type: 3}
+      propertyPath: m_Text
+      value: 192.168.0.104:8889/zed
+      objectReference: {fileID: 0}
+    - target: {fileID: 8669094407375672109, guid: 4b97ac8c74f3dc440842829c03f62e37, type: 3}
       propertyPath: m_OnEndEdit.m_PersistentCalls.m_Calls.Array.data[0].m_Target
       value: 
       objectReference: {fileID: 255038650}
+    - target: {fileID: 8669094407375672109, guid: 4b97ac8c74f3dc440842829c03f62e37, type: 3}
+      propertyPath: m_OnEndEdit.m_PersistentCalls.m_Calls.Array.data[0].m_CallState
+      value: 2
+      objectReference: {fileID: 0}
     - target: {fileID: 8669094407375672109, guid: 4b97ac8c74f3dc440842829c03f62e37, type: 3}
       propertyPath: m_OnEndEdit.m_PersistentCalls.m_Calls.Array.data[0].m_MethodName
       value: SetBaseStreamUrl
@@ -11617,6 +11704,70 @@ PrefabInstance:
       propertyPath: m_LocalEulerAnglesHint.z
       value: 0
       objectReference: {fileID: 0}
+    - target: {fileID: 9070943672644481630, guid: c029aaa7511b7274cac15786f950078f, type: 3}
+      propertyPath: m_Enabled
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 9070943672644481630, guid: c029aaa7511b7274cac15786f950078f, type: 3}
+      propertyPath: bHapticsGlove
+      value: 
+      objectReference: {fileID: 1556650707}
+    - target: {fileID: 9070943672644481630, guid: c029aaa7511b7274cac15786f950078f, type: 3}
+      propertyPath: showDebugLogs
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 9070943672644481630, guid: c029aaa7511b7274cac15786f950078f, type: 3}
+      propertyPath: changeDeadband
+      value: 0.0005
+      objectReference: {fileID: 0}
+    - target: {fileID: 9070943672644481630, guid: c029aaa7511b7274cac15786f950078f, type: 3}
+      propertyPath: deltaSmoothing
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 9070943672644481630, guid: c029aaa7511b7274cac15786f950078f, type: 3}
+      propertyPath: pulseDutyCycle
+      value: 0.18
+      objectReference: {fileID: 0}
+    - target: {fileID: 9070943672644481630, guid: c029aaa7511b7274cac15786f950078f, type: 3}
+      propertyPath: fullScaleChange
+      value: 0.1461
+      objectReference: {fileID: 0}
+    - target: {fileID: 9070943672644481630, guid: c029aaa7511b7274cac15786f950078f, type: 3}
+      propertyPath: webRTCController
+      value: 
+      objectReference: {fileID: 1746223496}
+    - target: {fileID: 9070943672644481630, guid: c029aaa7511b7274cac15786f950078f, type: 3}
+      propertyPath: enableUdpDebugInput
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 9070943672644481630, guid: c029aaa7511b7274cac15786f950078f, type: 3}
+      propertyPath: maxPulseFrequencyHz
+      value: 60
+      objectReference: {fileID: 0}
+    - target: {fileID: 9070943672644481630, guid: c029aaa7511b7274cac15786f950078f, type: 3}
+      propertyPath: minPulseFrequencyHz
+      value: 0.5
+      objectReference: {fileID: 0}
+    - target: {fileID: 9070943672644481630, guid: c029aaa7511b7274cac15786f950078f, type: 3}
+      propertyPath: inspireIntensityPower
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 9070943672644481630, guid: c029aaa7511b7274cac15786f950078f, type: 3}
+      propertyPath: releaseIntensityScale
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 9070943672644481630, guid: c029aaa7511b7274cac15786f950078f, type: 3}
+      propertyPath: pulseCommandDurationMs
+      value: 5
+      objectReference: {fileID: 0}
+    - target: {fileID: 9070943672644481630, guid: c029aaa7511b7274cac15786f950078f, type: 3}
+      propertyPath: enableContinuousHaptics
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 9070943672644481630, guid: c029aaa7511b7274cac15786f950078f, type: 3}
+      propertyPath: inspireMinIntensityThreshold
+      value: 0
+      objectReference: {fileID: 0}
     - target: {fileID: 9217152344612217286, guid: c029aaa7511b7274cac15786f950078f, type: 3}
       propertyPath: m_Name
       value: WebRTC Haptics Receiver
@@ -11624,7 +11775,10 @@ PrefabInstance:
     m_RemovedComponents: []
     m_RemovedGameObjects: []
     m_AddedGameObjects: []
-    m_AddedComponents: []
+    m_AddedComponents:
+    - targetCorrespondingSourceObject: {fileID: 9217152344612217286, guid: c029aaa7511b7274cac15786f950078f, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 1071099215}
   m_SourcePrefab: {fileID: 100100000, guid: c029aaa7511b7274cac15786f950078f, type: 3}
 --- !u!1 &1555496560
 GameObject:
@@ -11657,6 +11811,17 @@ Transform:
   m_Children: []
   m_Father: {fileID: 1267058357}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &1556650707 stripped
+MonoBehaviour:
+  m_CorrespondingSourceObject: {fileID: 2868661073973002005, guid: bb7dcf67defb7d842853b66e812e4e2e, type: 3}
+  m_PrefabInstance: {fileID: 1438223174}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: eb55fa0883766e444992f30cfc83b9b5, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
 --- !u!1 &1560357567
 GameObject:
   m_ObjectHideFlags: 0
@@ -13036,6 +13201,7 @@ MonoBehaviour:
   serverUrl: mel06293d:8080/offer
   vrCamera: {fileID: 1187398185}
   bodyPoseProvider: {fileID: 1515905724}
+  aprilTagTracker: {fileID: 0}
   statusText: {fileID: 1350388490}
   videoRenderTexture: {fileID: 8400000, guid: c8114d2dae2a84b3fad9412f0c6a9413, type: 2}
   videoMaterial: {fileID: 2100000, guid: 5e1d5e7379e114ad49a9cd559f359d8d, type: 2}
