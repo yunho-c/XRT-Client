@@ -62,6 +62,19 @@ public class WebRTCHapticReceiver : MonoBehaviour
     [Tooltip("The bHaptics Physics Glove component. Leave null to use singleton instance.")]
     public BhapticsPhysicsGlove bHapticsGlove;
 
+    [Tooltip("Master toggle for vibrotactile (bHaptics glove) output. Toggled remotely by the " +
+             "user study manager via the 'unity_cmds' channel (UnityCommandReceiver). Independent " +
+             "of audio haptics — both, either, or neither can be active.")]
+    public bool vibrotactileEnabled = true;
+
+    [Header("Audio Haptics Mode")]
+    [Tooltip("When enabled, routes fingertip forces to FingertipAudioHaptics (spatial piano notes). " +
+             "Independent of vibrotactile output — enabling this no longer disables the gloves. " +
+             "Toggled remotely by the user study manager via the 'unity_cmds' channel.")]
+    public bool useAudioHaptics = false;
+    [Tooltip("FingertipAudioHaptics component to drive when audio mode is enabled.")]
+    public FingertipAudioHaptics audioHapticsPlayer;
+
     [Header("Sensor Floor and Saturation (normalized 0-1)")]
     [Tooltip("Force below this is treated as no contact (silent). Maps to the sensor's " +
              "physical resolution floor (~0.5 N for Inspire RH56DFTP).")]
@@ -745,8 +758,26 @@ public class WebRTCHapticReceiver : MonoBehaviour
     /// </summary>
     void SendHapticsForHand(bool isLeft, HapticData hapticData)
     {
-        if (bHapticsGlove == null || hapticData == null)
-            return;
+        if (hapticData == null) return;
+
+        // Audio haptics: route fingertip forces to piano-note feedback. Independent of the
+        // vibrotactile path below — the study manager toggles the two separately, so this no
+        // longer short-circuits the gloves.
+        if (useAudioHaptics && audioHapticsPlayer != null)
+        {
+            audioHapticsPlayer.SendHapticsForHand(isLeft, new float[]
+            {
+                hapticData.thumb,
+                hapticData.index,
+                hapticData.middle,
+                hapticData.ring,
+                hapticData.little,
+                hapticData.palm
+            });
+        }
+
+        // Vibrotactile haptics: drive the bHaptics gloves. Gated independently of audio.
+        if (!vibrotactileEnabled || bHapticsGlove == null) return;
 
         HandDynamicsState dynamics = isLeft ? leftDynamicsState : rightDynamicsState;
         int position = isLeft ? 8 : 9; // Position: 8 = GloveL, 9 = GloveR
@@ -929,6 +960,53 @@ public class WebRTCHapticReceiver : MonoBehaviour
             state.inOnPhase[i] = false;
         }
         state.wasActiveLastFrame = false;
+    }
+
+    // ── Remote command API (driven by UnityCommandReceiver / study manager) ────
+
+    /// <summary>
+    /// Enable/disable vibrotactile (bHaptics glove) output at runtime. When disabling,
+    /// immediately zeroes both gloves and resets burst state so no residual vibration lingers.
+    /// </summary>
+    public void SetVibrotactileEnabled(bool enabled)
+    {
+        vibrotactileEnabled = enabled;
+        if (!enabled)
+        {
+            ClearAllMotors();
+        }
+        if (showDebugLogs)
+        {
+            Debug.Log($"[WebRTCHapticReceiver] Vibrotactile haptics {(enabled ? "enabled" : "disabled")}");
+        }
+    }
+
+    /// <summary>
+    /// Enable/disable audio (piano-note) haptics at runtime.
+    /// </summary>
+    public void SetAudioHapticsEnabled(bool enabled)
+    {
+        useAudioHaptics = enabled;
+        if (showDebugLogs)
+        {
+            Debug.Log($"[WebRTCHapticReceiver] Audio haptics {(enabled ? "enabled" : "disabled")}");
+        }
+    }
+
+    /// <summary>
+    /// Immediately zero both bHaptics gloves and reset per-hand burst state. Used when
+    /// vibrotactile output is switched off so the motors stop on the same frame.
+    /// </summary>
+    void ClearAllMotors()
+    {
+        try
+        {
+            BhapticsLibrary.PlayMotors(8, new int[FingerCount], continuousCommandDurationMs); // GloveL
+            BhapticsLibrary.PlayMotors(9, new int[FingerCount], continuousCommandDurationMs); // GloveR
+        }
+        catch { }
+        ResetHandDynamics(leftDynamicsState);
+        ResetHandDynamics(rightDynamicsState);
     }
 
     void OnDestroy()

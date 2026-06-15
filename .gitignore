@@ -161,3 +161,20 @@ $RECYCLE.BIN/
 *.lnk
 
 # End of https://www.toptal.com/developers/gitignore/api/unity,windows,macos,linux
+
+### Claude Code / MCP tooling (not part of the project) ###
+# Claude Code per-user config, skills, and local settings
+.claude/
+CLAUDE.md
+
+# MCP server config (may contain auth tokens — never commit)
+.mcp.json
+.cursor/mcp.json
+mcp.json
+
+# MCP helper scripts
+/tools/
+
+# Unity MCP plugin runtime (NuGet-installed DLLs pulled in by the MCP server)
+Assets/Plugins/NuGet/
+Assets/Plugins/NuGet.meta

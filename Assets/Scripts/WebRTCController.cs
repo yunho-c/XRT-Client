@@ -426,6 +426,32 @@ public void ToggleVideoStream(bool isOn)
           SetupDataChannelEvents(channel);
         }
       }
+      else if (channel.Label == "motor_stats")
+      {
+        MotorStatsReceiver motorStatsReceiver = FindObjectOfType<MotorStatsReceiver>();
+        if (motorStatsReceiver != null)
+        {
+          motorStatsReceiver.OnMotorStatsChannelReceived(channel);
+        }
+        else
+        {
+          SetupDataChannelEvents(channel);
+        }
+      }
+      else if (channel.Label == "unity_cmds")
+      {
+        // High-level UI commands from the user study manager (audio/vibrotactile
+        // haptics toggles, streaming-display toggle).
+        UnityCommandReceiver commandReceiver = FindObjectOfType<UnityCommandReceiver>();
+        if (commandReceiver != null)
+        {
+          commandReceiver.OnUnityCommandChannelReceived(channel);
+        }
+        else
+        {
+          SetupDataChannelEvents(channel);
+        }
+      }
       else
       {
         SetupDataChannelEvents(channel);
