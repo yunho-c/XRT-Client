@@ -1,84 +1,136 @@
 using UnityEngine;
-using Oculus.Interaction;
+using System.Collections;
 
+/// <summary>
+/// Shows/hides a UI panel from a held hand pose (e.g. RockRollPoseLeft), wired via an
+/// Oculus.Interaction SelectorUnityEventWrapper:
+///   _whenSelected   -> OnGestureDetected (pose entered)
+///   _whenUnselected -> OnGestureLost     (pose exited)
+///
+/// Behaviour (toggleMode):
+///   - OPEN  requires holding the pose continuously for <see cref="holdToOpenSeconds"/>.
+///           Releasing the pose before that cancels the open.
+///   - CLOSE is immediate: while the UI is open, performing the pose again closes it at once.
+/// </summary>
 public class GestureUIController : MonoBehaviour
 {
     [SerializeField] private GameObject uiPanel; // Reference to your CanvasRoot
     [SerializeField] private bool toggleMode = true; // Toggle on/off or show while gesture active
 
+    [Header("Hold To Open")]
+    [Tooltip("Seconds the pose must be held continuously before the UI opens. Closing stays immediate.")]
+    [SerializeField] private float holdToOpenSeconds = 1.0f;
+
+    [Tooltip("Optional radial progress ring shown at the hand while holding to open (Quest-style).")]
+    [SerializeField] private GestureHoldIndicator holdIndicator;
+
     [Header("Audio")]
     [SerializeField] private AudioSource audioSource;
-    [SerializeField] private AudioClip gestureDetectedSound;
-    [SerializeField] private AudioClip gestureLostSound; // Optional
+    [SerializeField] private AudioClip gestureDetectedSound; // played when the UI opens
+    [SerializeField] private AudioClip gestureLostSound;     // played when the UI closes
 
     [Header("Cooldown")]
+    [Tooltip("Minimum seconds between gesture actions; debounces pose flicker.")]
     [SerializeField] private float detectionCooldown = 1.0f;
 
-    private bool isUIVisible = true; // UI visible by default
-    private float lastDetectionTime = float.NegativeInfinity;
+    private bool isUIVisible = true; // synced to uiPanel state on Start
+    private float lastActionTime = float.NegativeInfinity;
+    private Coroutine _openRoutine;
 
-    public void OnGestureDetected()
+    void Start()
     {
-        if (Time.time - lastDetectionTime < detectionCooldown)
-            return;
-
-        lastDetectionTime = Time.time;
-
-        // Play sound when gesture is detected
-        PlaySound(gestureDetectedSound);
-        
-        if (toggleMode)
-        {
-            // Toggle UI visibility
-            isUIVisible = !isUIVisible;
-            uiPanel.SetActive(isUIVisible);
-        }
-        else
-        {
-            // Show UI while gesture is active
-            uiPanel.SetActive(true);
-        }
-
-        // Always show UI when gesture is detected
-        // uiPanel.SetActive(true);
+        if (uiPanel != null)
+            isUIVisible = uiPanel.activeSelf;
     }
 
-    public void OnGestureLost()
+    /// <summary>Pose entered (SelectorUnityEventWrapper._whenSelected).</summary>
+    public void OnGestureDetected()
     {
-        // Optionally play sound when gesture is lost
-        if (gestureLostSound != null)
+        if (Time.time - lastActionTime < detectionCooldown)
+            return;
+
+        if (toggleMode && isUIVisible)
         {
+            // UI already open -> close immediately when the pose is performed again.
+            lastActionTime = Time.time;
+            CancelPendingOpen();
+            SetUI(false);
             PlaySound(gestureLostSound);
-        }
-        
-        if (!toggleMode)
-        {
-            // Hide UI when gesture is no longer detected
-            uiPanel.SetActive(false);
+            return;
         }
 
-        // Always hide UI when gesture is lost
-        // uiPanel.SetActive(false);
+        // UI closed (or momentary mode) -> only open after the pose is held long enough.
+        lastActionTime = Time.time;
+        CancelPendingOpen();
+        _openRoutine = StartCoroutine(OpenAfterHold());
+    }
+
+    /// <summary>Pose exited (SelectorUnityEventWrapper._whenUnselected).</summary>
+    public void OnGestureLost()
+    {
+        // Released before the hold completed -> abort the pending open.
+        CancelPendingOpen();
+
+        // Momentary (non-toggle) mode hides as soon as the pose ends.
+        if (!toggleMode)
+            SetUI(false);
+    }
+
+    private IEnumerator OpenAfterHold()
+    {
+        // Pose must remain held for the whole duration; OnGestureLost cancels this coroutine.
+        if (holdIndicator != null) holdIndicator.Show();
+
+        float elapsed = 0f;
+        while (elapsed < holdToOpenSeconds)
+        {
+            elapsed += Time.deltaTime;
+            if (holdIndicator != null) holdIndicator.SetProgress(elapsed / holdToOpenSeconds);
+            yield return null;
+        }
+
+        _openRoutine = null;
+        if (holdIndicator != null) holdIndicator.Hide();
+        SetUI(true);
+        PlaySound(gestureDetectedSound);
+        // Reset the cooldown from the moment it opens so a post-open pose flicker
+        // can't immediately close it.
+        lastActionTime = Time.time;
+    }
+
+    private void CancelPendingOpen()
+    {
+        if (_openRoutine != null)
+        {
+            StopCoroutine(_openRoutine);
+            _openRoutine = null;
+        }
+        if (holdIndicator != null) holdIndicator.Hide();
+    }
+
+    private void SetUI(bool visible)
+    {
+        isUIVisible = visible;
+        if (uiPanel != null)
+            uiPanel.SetActive(visible);
     }
 
     private void PlaySound(AudioClip clip)
     {
         if (audioSource != null && clip != null)
-        {
             audioSource.PlayOneShot(clip);
-        }
     }
 
-    // Optional: Public methods for more complex UI transitions
+    // Public helpers (e.g. for UI buttons / other events).
     public void ShowUI()
     {
-        uiPanel.SetActive(true);
-        isUIVisible = true;
+        CancelPendingOpen();
+        SetUI(true);
     }
 
     public void HideUI()
     {
-        uiPanel.SetActive(false);
-        isUIVisible = false;
+        CancelPendingOpen();
+        SetUI(false);
     }
 }

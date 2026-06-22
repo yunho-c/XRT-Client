@@ -26,6 +26,23 @@ Shader "Custom/ZEDStereoPassthrough"
         _UVScaleY  ("UV Scale Y",     Float) = 1.0
         _IPDShift  ("IPD Shift (UV)", Float) = 0.0
         _FlipY     ("Flip Y",         Float) = 0.0
+
+        // User reposition (set by ZEDFOVFiller). Applied IDENTICALLY to both eyes so
+        // stereo alignment is preserved (no per-eye vertical/horizontal asymmetry).
+        _UserZoom    ("User Zoom",     Float) = 1.0   // >1 zooms in (magnifies feed)
+        _UserOffsetX ("User Offset X", Float) = 0.0   // pans feed horizontally
+        _UserOffsetY ("User Offset Y", Float) = 0.0   // pans feed vertically
+
+        // Zoom convergence (IPD comfort): extra per-eye convergence that scales with the zoom,
+        // pulling the two eye images together as you zoom in so disparity doesn't blow up into
+        // double vision. Tune to the operator. 0 = no compensation.
+        _ZoomConvergence ("Zoom Convergence", Float) = 0.0
+
+        // Canvas (display window) shaping — scales the clip-space output rectangle.
+        // The pass renders in clip space, so these reshape the on-screen window itself.
+        _CanvasScaleX ("Canvas Scale X (stretch)", Float) = 1.0
+        _CanvasScaleY ("Canvas Scale Y (stretch)", Float) = 1.0
+        _CanvasDepth  ("Canvas Depth (uniform)",   Float) = 1.0   // >1 bigger/closer, <1 smaller/further
     }
 
     SubShader
@@ -78,6 +95,13 @@ Shader "Custom/ZEDStereoPassthrough"
                 float  _UVScaleY;
                 float  _IPDShift;
                 float  _FlipY;
+                float  _UserZoom;
+                float  _UserOffsetX;
+                float  _UserOffsetY;
+                float  _ZoomConvergence;
+                float  _CanvasScaleX;
+                float  _CanvasScaleY;
+                float  _CanvasDepth;
             CBUFFER_END
 
             Varyings Vert(Attributes IN)
@@ -89,8 +113,9 @@ Shader "Custom/ZEDStereoPassthrough"
                 // Output directly in clip/NDC space — bypasses the 3D camera
                 // transform so both eyes see identical full-screen coverage with
                 // zero parallax. Unity's default quad has X/Y in [-0.5, 0.5].
-                OUT.positionHCS = float4(IN.positionOS.x * 2.0,
-                                        IN.positionOS.y * 2.0,
+                // Canvas shaping: stretch (X/Y) and uniform depth scale of the clip-space window.
+                OUT.positionHCS = float4(IN.positionOS.x * 2.0 * _CanvasScaleX * _CanvasDepth,
+                                        IN.positionOS.y * 2.0 * _CanvasScaleY * _CanvasDepth,
                                         0.999, 1.0);
                 // _FlipY is set by ZEDFOVFiller. Toggle it in the Inspector
                 // if the image appears upside down (needed in editor, not on device or vice versa).
@@ -102,15 +127,23 @@ Shader "Custom/ZEDStereoPassthrough"
             {
                 UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(IN);
 
-                // 1. FOV correction: scale around center to letterbox/stretch.
-                float2 uv = (IN.uv - 0.5) * float2(_UVScaleX, _UVScaleY) + 0.5;
+                // 1. FOV correction + user zoom: scale around center. _UserZoom>1 magnifies.
+                //    Applied to both eyes identically, so stereo stays aligned.
+                float2 uv = (IN.uv - 0.5) * float2(_UVScaleX, _UVScaleY) / max(_UserZoom, 1e-3) + 0.5;
+
+                // 1b. User pan: shift the feed the SAME way for both eyes (no parallax change).
+                uv.x += _UserOffsetX;
+                uv.y += _UserOffsetY;
 
                 // 2. IPD correction: nudge each eye horizontally in opposite directions.
                 //    Left eye (index 0): negative shift samples further left in texture
                 //    Right eye (index 1): positive shift samples further right in texture
                 //    Together this widens the effective stereo baseline when positive.
+                //    Zoom convergence is added in: as _UserZoom rises above 1, the eyes are
+                //    pulled together so the magnified parallax stays fusible (no double vision).
                 float eyeSign = (unity_StereoEyeIndex == 0) ? -1.0 : 1.0;
-                uv.x += _IPDShift * eyeSign;
+                float converge = _IPDShift + _ZoomConvergence * (_UserZoom - 1.0);
+                uv.x += converge * eyeSign;
 
                 uv = saturate(uv);
 

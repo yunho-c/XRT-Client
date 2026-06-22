@@ -14,36 +14,44 @@ public class MediaMTXReceiver : MonoBehaviour
 
     [Header("UI Elements")]
     // Reference to the InputField (to load the saved URL)
-    [SerializeField] private TMP_InputField ipAddressInputField; 
+    [SerializeField] private TMP_InputField ipAddressInputField;
     // Reference to the Text component (to show status)
     [SerializeField] private TMP_Text statusText;
     // Reference to the connect toggle to disable during connection
     [SerializeField] private UnityEngine.UI.Toggle connectToggle;
-    
+
     // Single material with both texture slots
     [SerializeField] private Material stereoMaterial;
-    
+
     // GameObject to hide/show the stereo display
     [SerializeField] private GameObject stereoDisplayObject;
 
     // Default state for video stream visibility
     [Tooltip("Default state for video stream visibility (overridden by PlayerPrefs)")]
-    public bool videoStreamVisible = true; 
+    public bool videoStreamVisible = true;
+
+    [Header("Connection")]
+    [Tooltip("Seconds to wait for the WHEP offer POST before giving up (so a bad address/server can't hang forever).")]
+    public float connectTimeoutSeconds = 10f;
 
     private string urlLeft;
     private string urlRight;
-    
+
     private RTCPeerConnection pcLeft;
     private RTCPeerConnection pcRight;
     private MediaStream receiveStreamLeft;
     private MediaStream receiveStreamRight;
-    
+
     // References to the actual video tracks
     private VideoStreamTrack _videoTrackLeft;
     private VideoStreamTrack _videoTrackRight;
 
     // Guard against repeated connection attempts
     private bool isConnecting = false;
+
+    // Tracked connect coroutines so we can cancel them without killing WebRTC.Update().
+    private Coroutine _coLeft;
+    private Coroutine _coRight;
 
     void Start()
     {
@@ -53,7 +61,6 @@ public class MediaMTXReceiver : MonoBehaviour
 
         // 2. Load and set the server URL (sets the internal urlLeft/urlRight)
         string savedBaseAddress = PlayerPrefs.GetString("stereoBaseUrl", defaultBaseAddress);
-        
         SetBaseStreamUrl(savedBaseAddress);
 
         // 3. Initialize Input Field and Status Text
@@ -70,7 +77,33 @@ public class MediaMTXReceiver : MonoBehaviour
         isConnecting = false;
         SetConnectToggleInteractable(true);
 
-        // Configure ICE servers
+        InitializePeerConnections();
+
+        StartCoroutine(WebRTC.Update());
+
+        // Auto-connect on first activation (preserves existing behavior).
+        if (true)
+        {
+            Debug.Log($"Auto-starting connection to: {savedBaseAddress}");
+            UpdateStatusText($"Auto-connecting to: {savedBaseAddress}...");
+            StartStream();
+        }
+    }
+
+    // Creates fresh peer connections (disposing any previous ones first). Does NOT start a
+    // connection — call StartStream() for that. Safe to call repeatedly for clean retries.
+    private void InitializePeerConnections()
+    {
+        if (_coLeft  != null) { StopCoroutine(_coLeft);  _coLeft  = null; }
+        if (_coRight != null) { StopCoroutine(_coRight); _coRight = null; }
+
+        pcLeft?.Close();  pcLeft?.Dispose();  pcLeft = null;
+        pcRight?.Close(); pcRight?.Dispose(); pcRight = null;
+        receiveStreamLeft?.Dispose();  receiveStreamLeft = null;
+        receiveStreamRight?.Dispose(); receiveStreamRight = null;
+        _videoTrackLeft = null;
+        _videoTrackRight = null;
+
         RTCConfiguration config = new RTCConfiguration
         {
             iceServers = new[]
@@ -78,7 +111,7 @@ public class MediaMTXReceiver : MonoBehaviour
                 new RTCIceServer {urls = new[] {"stun:stun.l.google.com:19302"}}
             }
         };
-        
+
         // Initialize left eye stream
         pcLeft = new RTCPeerConnection(ref config);
         receiveStreamLeft = new MediaStream();
@@ -96,17 +129,17 @@ public class MediaMTXReceiver : MonoBehaviour
             {
                 UpdateStatusText("Left Peer connected!");
             }
-            else if (state == RTCPeerConnectionState.Failed || 
+            else if (state == RTCPeerConnectionState.Failed ||
                      state == RTCPeerConnectionState.Disconnected ||
                      state == RTCPeerConnectionState.Closed)
             {
                 // Only reset if right is also not connected
-                if (pcRight == null || 
+                if (pcRight == null ||
                     pcRight.ConnectionState == RTCPeerConnectionState.Failed ||
                     pcRight.ConnectionState == RTCPeerConnectionState.Disconnected ||
                     pcRight.ConnectionState == RTCPeerConnectionState.Closed)
                 {
-                    ResetConnectionState($"Connection {state}. Try again.");
+                    ResetConnectionState($"Connection {state}. Press to retry.");
                 }
             }
         };
@@ -121,7 +154,7 @@ public class MediaMTXReceiver : MonoBehaviour
             if (e.Track is VideoStreamTrack videoTrack)
             {
                 _videoTrackLeft = videoTrack;
-                _videoTrackLeft.Enabled = videoStreamVisible; 
+                _videoTrackLeft.Enabled = videoStreamVisible;
 
                 videoTrack.OnVideoReceived += (tex) =>
                 {
@@ -162,11 +195,11 @@ public class MediaMTXReceiver : MonoBehaviour
                     UpdateStatusText("Right Peer connected! Waiting for left...");
                 }
             }
-            else if (state == RTCPeerConnectionState.Failed || 
+            else if (state == RTCPeerConnectionState.Failed ||
                      state == RTCPeerConnectionState.Disconnected ||
                      state == RTCPeerConnectionState.Closed)
             {
-                ResetConnectionState($"Connection {state}. Try again.");
+                ResetConnectionState($"Connection {state}. Press to retry.");
             }
         };
 
@@ -195,16 +228,6 @@ public class MediaMTXReceiver : MonoBehaviour
         RTCRtpTransceiverInit initRight = new RTCRtpTransceiverInit();
         initRight.direction = RTCRtpTransceiverDirection.RecvOnly;
         pcRight.AddTransceiver(TrackKind.Video, initRight);
-
-        StartCoroutine(WebRTC.Update());
-        
-        // Check for auto-start connection
-        if (true)
-        {
-            Debug.Log($"Auto-starting connection to: {savedBaseAddress}");
-            UpdateStatusText($"Auto-connecting to: {savedBaseAddress}...");
-            StartStream();
-        }
     }
 
     // Helper method to safely update the status text
@@ -234,49 +257,70 @@ public class MediaMTXReceiver : MonoBehaviour
         UpdateStatusText(statusMessage);
     }
 
+    private bool IsConnected()
+    {
+        return pcLeft != null && pcRight != null &&
+               pcLeft.ConnectionState == RTCPeerConnectionState.Connected &&
+               pcRight.ConnectionState == RTCPeerConnectionState.Connected;
+    }
+
+    /// <summary>
+    /// Single entry point for the Streaming Connection button: connect when idle, or cancel the
+    /// in-progress / established connection when pressed again (so a snagged attempt can be retried
+    /// without reloading the scene).
+    /// </summary>
+    public void ToggleConnection()
+    {
+        if (isConnecting || IsConnected())
+            CancelConnection("Streaming connection cancelled — press to retry.");
+        else
+            StartStream();
+    }
+
     // Public function to be called by a dedicated "Connect" button.
     public void StartStream()
     {
-        // Guard against repeated clicks while connecting
+        // Already mid-connect: do nothing (cancel is handled by ToggleConnection).
         if (isConnecting)
         {
-            Debug.Log("Connection already in progress, ignoring click.");
-            UpdateStatusText("Connection in progress, please wait...");
+            Debug.Log("Connection already in progress.");
             return;
         }
 
-        if (pcLeft == null || pcRight == null)
+        // Ensure we have fresh peer connections (recreate if missing or in a dead state).
+        if (pcLeft == null || pcRight == null ||
+            pcLeft.ConnectionState  == RTCPeerConnectionState.Closed || pcLeft.ConnectionState  == RTCPeerConnectionState.Failed ||
+            pcRight.ConnectionState == RTCPeerConnectionState.Closed || pcRight.ConnectionState == RTCPeerConnectionState.Failed)
         {
-            UpdateStatusText("Error: Peer connections not initialized. Restart component.");
-            return;
+            InitializePeerConnections();
         }
-        
-        // Set the guard and disable the button
+
+        // NOTE: intentionally do NOT disable the connect toggle here — it must stay pressable so
+        // the user can press again to cancel a snagged connection.
         isConnecting = true;
-        SetConnectToggleInteractable(false);
-        
-        UpdateStatusText($"Starting stream connection offers for {urlLeft} and {urlRight}...");
-        
-        // Start the connection using the current (most recently saved) URLs
-        StartCoroutine(createOffer(pcLeft, urlLeft));
-        StartCoroutine(createOffer(pcRight, urlRight));
+
+        UpdateStatusText($"Connecting to {urlLeft} / {urlRight}...");
+
+        _coLeft  = StartCoroutine(createOffer(pcLeft,  urlLeft));
+        _coRight = StartCoroutine(createOffer(pcRight, urlRight));
     }
-    
-    // Public method to manually stop the connection
+
+    /// <summary>
+    /// Cancel any in-progress / established connection and re-create fresh peer connections so the
+    /// next StartStream() is a clean retry. Keeps the GameObject active and WebRTC.Update running.
+    /// </summary>
+    public void CancelConnection(string reason = "Disconnected.")
+    {
+        isConnecting = false;
+        SetConnectToggleInteractable(true);
+        InitializePeerConnections();   // stops tracked coroutines + disposes + recreates
+        UpdateStatusText(reason);
+    }
+
+    // Public method to manually stop the connection.
     public void StopStream()
     {
-        pcLeft?.Close();
-        pcLeft?.Dispose();
-        receiveStreamLeft?.Dispose();
-
-        pcRight?.Close();
-        pcRight?.Dispose();
-        receiveStreamRight?.Dispose();
-
-        // Re-initialize for next start
-        Start(); 
-        
-        UpdateStatusText("Disconnected.");
+        CancelConnection("Disconnected.");
     }
 
     // Public method to be called from a UI InputField's On End Edit (String) event
@@ -287,11 +331,11 @@ public class MediaMTXReceiver : MonoBehaviour
         // 1. Save the new base address
         PlayerPrefs.SetString("stereoBaseUrl", baseAddressAndPort);
         PlayerPrefs.Save();
-        
+
         // 2. Construct the final URLs with the "backwards" logic
         urlLeft = $"http://{baseAddressAndPort}/right/whep";
         urlRight = $"http://{baseAddressAndPort}/left/whep";
-        
+
         UpdateStatusText($"URL set: {baseAddressAndPort}");
     }
 
@@ -323,7 +367,7 @@ public class MediaMTXReceiver : MonoBehaviour
         yield return op;
         if (op.IsError) {
             Debug.LogError($"CreateOffer() failed for {url}");
-            ResetConnectionState($"Error creating offer for {url}");
+            CancelConnection($"Error creating offer for {url}. Press to retry.");
             yield break;
         }
 
@@ -336,7 +380,7 @@ public class MediaMTXReceiver : MonoBehaviour
         yield return op;
         if (op.IsError) {
             Debug.LogError($"SetLocalDescription() failed for {url}");
-            ResetConnectionState($"Error setting local description for {url}");
+            CancelConnection($"Error setting local description for {url}. Press to retry.");
             yield break;
         }
 
@@ -349,19 +393,22 @@ public class MediaMTXReceiver : MonoBehaviour
         var content = new System.Net.Http.StringContent(offer.sdp);
         content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/sdp");
 
+        float timeout = Mathf.Max(1f, connectTimeoutSeconds);
         var task = System.Threading.Tasks.Task.Run(async () => {
             using (var client = new System.Net.Http.HttpClient())
             {
+                // Bounded timeout so an unreachable server can't hang the connection forever.
+                client.Timeout = System.TimeSpan.FromSeconds(timeout);
                 var res = await client.PostAsync(new System.UriBuilder(url).Uri, content);
                 res.EnsureSuccessStatusCode();
                 return await res.Content.ReadAsStringAsync();
             }
         });
         yield return new WaitUntil(() => task.IsCompleted);
-        
+
         if (task.Exception != null) {
             Debug.LogError($"PostOffer() failed for {url}: {task.Exception.InnerException?.Message ?? task.Exception.Message}");
-            ResetConnectionState($"Connection failed: {task.Exception.InnerException?.Message ?? task.Exception.Message}");
+            CancelConnection($"Connection failed: {task.Exception.InnerException?.Message ?? task.Exception.Message}. Press to retry.");
             yield break;
         }
 
@@ -378,7 +425,7 @@ public class MediaMTXReceiver : MonoBehaviour
         yield return op;
         if (op.IsError) {
             Debug.LogError($"SetRemoteDescription() failed for {url}");
-            ResetConnectionState($"Error setting remote description for {url}");
+            CancelConnection($"Error setting remote description for {url}. Press to retry.");
             yield break;
         }
 
@@ -390,10 +437,10 @@ public class MediaMTXReceiver : MonoBehaviour
     {
         // Stop all running coroutines
         StopAllCoroutines();
-        
+
         // Save the current visibility state
         PlayerPrefs.SetInt("stereoStreamVisible", videoStreamVisible ? 1 : 0);
-        
+
         // Save the latest successful base address
         if (!string.IsNullOrEmpty(urlLeft))
         {

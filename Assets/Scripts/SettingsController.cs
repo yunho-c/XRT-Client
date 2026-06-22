@@ -6,17 +6,20 @@ using UnityEngine.UI;
 ///   - Settings button toggles panel visibility
 ///   - Haptics toggle enables/disables vibrotactile (bHaptics) output
 ///   - Audio Haptics toggle switches audio (piano-note) haptics
-/// Both drive the same gates the remote study manager toggles (UnityCommandReceiver).
+///   - Avatar toggle shows/hides the player avatar (ghost outline) during teleop
+/// Both haptics toggles drive the same gates the remote study manager toggles (UnityCommandReceiver).
 /// </summary>
 public class SettingsController : MonoBehaviour
 {
     [Header("References")]
     public WebRTCHapticReceiver hapticReceiver;
     public GameObject           settingsPanel;
+    public TeleopVisualsController teleopVisuals;
 
     [Header("Toggles")]
     public Toggle hapticsToggle;
     public Toggle audioHapticsToggle;
+    public Toggle avatarVisualsToggle;
 
     void Start()
     {
@@ -27,9 +30,12 @@ public class SettingsController : MonoBehaviour
             if (hapticsToggle      != null) hapticsToggle.isOn      = hapticReceiver.vibrotactileEnabled;
             if (audioHapticsToggle != null) audioHapticsToggle.isOn = hapticReceiver.useAudioHaptics;
         }
+        if (avatarVisualsToggle != null && teleopVisuals != null)
+            avatarVisualsToggle.isOn = teleopVisuals.showAvatarDuringTeleop;
 
-        if (hapticsToggle      != null) hapticsToggle.onValueChanged.AddListener(SetHapticsEnabled);
-        if (audioHapticsToggle != null) audioHapticsToggle.onValueChanged.AddListener(SetAudioHapticsEnabled);
+        if (hapticsToggle       != null) hapticsToggle.onValueChanged.AddListener(SetHapticsEnabled);
+        if (audioHapticsToggle  != null) audioHapticsToggle.onValueChanged.AddListener(SetAudioHapticsEnabled);
+        if (avatarVisualsToggle != null) avatarVisualsToggle.onValueChanged.AddListener(SetAvatarVisualsEnabled);
     }
 
     public void ToggleSettingsPanel()
@@ -55,5 +61,11 @@ public class SettingsController : MonoBehaviour
     public void SetAudioHapticsEnabled(bool isOn)
     {
         if (hapticReceiver != null) hapticReceiver.SetAudioHapticsEnabled(isOn);
+    }
+
+    public void SetAvatarVisualsEnabled(bool isOn)
+    {
+        // ON = show the ghost-outline avatar during teleop; OFF = hide it entirely.
+        if (teleopVisuals != null) teleopVisuals.SetShowAvatarDuringTeleop(isOn);
     }
 }

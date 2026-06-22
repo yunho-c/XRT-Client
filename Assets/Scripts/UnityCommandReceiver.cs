@@ -37,10 +37,9 @@ public class UnityCommandReceiver : MonoBehaviour
              "CloverUI toggle nor a MediaMTXReceiver is assigned.")]
     public WebRTCController webRTCController;
 
-    [Tooltip("Optional: the CloverUI 'Streaming Display' toggle (StreamingDisplayButton). When " +
-             "assigned, show_streaming_viewport drives this toggle so the remote command behaves " +
-             "exactly like a button press AND the in-VR checkbox stays in sync. Takes priority " +
-             "over the receiver references below.")]
+    [Tooltip("Optional: the CloverUI FPV display toggle (ToggleFPVDisplay). When assigned, its " +
+             "checkbox is kept visually in sync (SetIsOnWithoutNotify) whenever SetStreamingViewport " +
+             "shows/hides the display.")]
     public Toggle streamingDisplayToggle;
 
     [Header("Debug")]
@@ -91,6 +90,64 @@ public class UnityCommandReceiver : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// Show/hide the stereo streaming viewport (the FPV display), repeatably. Also used by the
+    /// CloverUI StreamingConnectionButton so connecting auto-opens the display.
+    ///
+    /// IMPORTANT: this calls <c>MediaMTXReceiver.ToggleVideoStream</c> DIRECTLY (a plain C# call)
+    /// rather than routing through the CloverUI toggle's onValueChanged. The viewport's
+    /// <c>stereoDisplayObject</c> is the same GameObject that hosts the <c>MediaMTXReceiver</c>, so
+    /// turning it off calls <c>SetActive(false)</c> on that GameObject. After that, a UnityEvent
+    /// (e.g. the toggle's persistent listener) can never reach <c>ToggleVideoStream</c> again,
+    /// because UnityEvents don't fire on inactive targets — which is why the toggle "only worked
+    /// once". A direct C# call still executes on a component whose GameObject is inactive, and
+    /// <c>ToggleVideoStream</c> re-activates the GameObject, so this toggles on/off as many times
+    /// as needed. The CloverUI checkbox is synced with SetIsOnWithoutNotify so its visual state
+    /// matches without re-invoking the bypassed (self-deactivating) event chain.
+    /// </summary>
+    public void SetStreamingViewport(bool show)
+    {
+        if (stereoReceiver != null)
+        {
+            stereoReceiver.ToggleVideoStream(show);
+        }
+        else if (webRTCController != null)
+        {
+            webRTCController.ToggleVideoStream(show);
+        }
+        else
+        {
+            Debug.LogWarning("[UnityCommandReceiver] No streaming display target assigned; ignoring SetStreamingViewport.");
+            return;
+        }
+
+        if (streamingDisplayToggle != null)
+        {
+            streamingDisplayToggle.SetIsOnWithoutNotify(show);
+        }
+    }
+
+    /// <summary>
+    /// Streaming Connection button entry point. Ensures the stereo viewport is active (so the
+    /// receiver's coroutines / WebRTC update keep running) and then connects, or cancels an
+    /// in-progress / established connection when pressed again — so a snagged connection can be
+    /// retried without reloading the scene. Routed through this always-active component because
+    /// the MediaMTXReceiver lives on the (sometimes inactive) viewport GameObject.
+    /// </summary>
+    public void ToggleStreamingConnection()
+    {
+        if (stereoReceiver == null)
+        {
+            Debug.LogWarning("[UnityCommandReceiver] No stereoReceiver assigned; ignoring ToggleStreamingConnection.");
+            return;
+        }
+        // Keep the display/viewport active so the connection coroutines can run (and don't hide it
+        // on cancel — that would deactivate the receiver and break the retry).
+        stereoReceiver.ToggleVideoStream(true);
+        if (streamingDisplayToggle != null) streamingDisplayToggle.SetIsOnWithoutNotify(true);
+        stereoReceiver.ToggleConnection();
+    }
+
     void HandleMessage(string message)
     {
         UnityCommandMessage cmd;
@@ -139,27 +196,7 @@ public class UnityCommandReceiver : MonoBehaviour
                 break;
 
             case "show_streaming_viewport":
-                // Prefer driving the CloverUI toggle: this fires the exact same
-                // onValueChanged -> MediaMTXReceiver.ToggleVideoStream the in-VR button uses,
-                // and keeps the checkbox visually in sync. Setting isOn to its current value is
-                // a no-op (Unity only fires on change), so the explicit receiver call below
-                // guarantees the action when the toggle is unavailable.
-                if (streamingDisplayToggle != null)
-                {
-                    streamingDisplayToggle.isOn = cmd.enabled;
-                }
-                else if (stereoReceiver != null)
-                {
-                    stereoReceiver.ToggleVideoStream(cmd.enabled);
-                }
-                else if (webRTCController != null)
-                {
-                    webRTCController.ToggleVideoStream(cmd.enabled);
-                }
-                else
-                {
-                    Debug.LogWarning("[UnityCommandReceiver] No streaming display target assigned; ignoring show_streaming_viewport.");
-                }
+                SetStreamingViewport(cmd.enabled);
                 break;
 
             default:
