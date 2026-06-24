@@ -53,8 +53,22 @@ public class MediaMTXReceiver : MonoBehaviour
     private Coroutine _coLeft;
     private Coroutine _coRight;
 
+    // Cached decoder textures bound to the stereo material, set ONLY from OnVideoReceived
+    // (the authoritative "a real frame arrived" signal) and cleared on disconnect. The
+    // display MeshRenderer is gated on BOTH being present: while there is no live video the
+    // renderer is disabled so the camera passthrough shows through (the camera clears to
+    // transparent over an OVRPassthroughLayer), instead of the blend shader painting a
+    // released/blank RenderTexture as a white semi-transparent overlay or an opaque black void.
+    private Texture _matTexLeft;
+    private Texture _matTexRight;
+    private MeshRenderer _meshRenderer;
+
     void Start()
     {
+        _meshRenderer = GetComponent<MeshRenderer>();
+        // Nothing to show until a frame arrives — keep passthrough until then.
+        UpdateDisplayVisibility();
+
         // 1. Load saved stream visibility state and apply it
         bool savedVideoVisible = PlayerPrefs.GetInt("stereoStreamVisible", videoStreamVisible ? 1 : 0) == 1;
         ToggleVideoStream(savedVideoVisible);
@@ -103,6 +117,13 @@ public class MediaMTXReceiver : MonoBehaviour
         receiveStreamRight?.Dispose(); receiveStreamRight = null;
         _videoTrackLeft = null;
         _videoTrackRight = null;
+
+        // Drop references to the old (now disposed) decoder textures and hide the display
+        // (show passthrough) until fresh frames arrive on reconnect — so a torn-down or
+        // failed stream never lingers as a white overlay / black void on the shared material.
+        _matTexLeft = null;
+        _matTexRight = null;
+        UpdateDisplayVisibility();
 
         RTCConfiguration config = new RTCConfiguration
         {
@@ -158,10 +179,9 @@ public class MediaMTXReceiver : MonoBehaviour
 
                 videoTrack.OnVideoReceived += (tex) =>
                 {
-                    if (stereoMaterial != null)
-                    {
-                        stereoMaterial.SetTexture("_Left", tex);
-                    }
+                    _matTexLeft = tex;
+                    if (stereoMaterial != null) stereoMaterial.SetTexture("_Left", tex);
+                    UpdateDisplayVisibility();
                 };
             }
         };
@@ -217,10 +237,9 @@ public class MediaMTXReceiver : MonoBehaviour
 
                 videoTrack.OnVideoReceived += (tex) =>
                 {
-                    if (stereoMaterial != null)
-                    {
-                        stereoMaterial.SetTexture("_Right", tex);
-                    }
+                    _matTexRight = tex;
+                    if (stereoMaterial != null) stereoMaterial.SetTexture("_Right", tex);
+                    UpdateDisplayVisibility();
                 };
             }
         };
@@ -265,16 +284,27 @@ public class MediaMTXReceiver : MonoBehaviour
     }
 
     /// <summary>
+    /// True while a stream connection is established or in progress. Used by the study
+    /// manager's Streaming Feed button to reflect the real state at connect time (Unity
+    /// auto-starts the stream on launch).
+    /// </summary>
+    public bool IsStreamingActive => isConnecting || IsConnected();
+
+    /// <summary>
     /// Single entry point for the Streaming Connection button: connect when idle, or cancel the
     /// in-progress / established connection when pressed again (so a snagged attempt can be retried
     /// without reloading the scene).
     /// </summary>
-    public void ToggleConnection()
+    /// <returns>The new intended state: true if a connection was started, false if cancelled.</returns>
+    public bool ToggleConnection()
     {
         if (isConnecting || IsConnected())
+        {
             CancelConnection("Streaming connection cancelled — press to retry.");
-        else
-            StartStream();
+            return false;
+        }
+        StartStream();
+        return true;
     }
 
     // Public function to be called by a dedicated "Connect" button.
@@ -359,6 +389,19 @@ public class MediaMTXReceiver : MonoBehaviour
 
         PlayerPrefs.SetInt("stereoStreamVisible", isOn ? 1 : 0);
         PlayerPrefs.Save();
+    }
+
+    // Show the display only when BOTH eyes have a live decoder texture; otherwise disable
+    // the MeshRenderer so the transparent-clearing camera reveals passthrough (instead of a
+    // white overlay from a blank/released RenderTexture, or an opaque black void). Once a
+    // texture is bound here it keeps updating in place as WebRTC pumps new frames, so no
+    // per-frame re-binding is needed.
+    private void UpdateDisplayVisibility()
+    {
+        if (_meshRenderer != null)
+        {
+            _meshRenderer.enabled = (_matTexLeft != null && _matTexRight != null);
+        }
     }
 
     private IEnumerator createOffer(RTCPeerConnection pc, string url)

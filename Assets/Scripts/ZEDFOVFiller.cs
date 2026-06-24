@@ -47,6 +47,14 @@ public class ZEDFOVFiller : MonoBehaviour
              "Typical range: -0.02 to +0.02.")]
     [SerializeField] private float ipdShift = 0f;
 
+    [Tooltip("IPD shift change per +/- button press (Align Video panel). Hold-to-repeat fires ~10/s, " +
+             "so this sets the sweep speed; tap for fine tuning.")]
+    public float ipdStep = 0.01f;
+    [Tooltip("Max absolute IPD shift (clamp). Kept small (typical tuning is ±0.02) so the " +
+             "hold-to-repeat button can't run the convergence far enough to break stereo fusion. " +
+             "A saved value beyond this is treated as a runaway and reset to 0 on load.")]
+    public float maxIPD = 0.05f;
+
     [Header("User Reposition (Align Video panel; saved to PlayerPrefs)")]
     [Tooltip("Zoom factor for the feed. >1 magnifies (zoom in). Applied to both eyes equally.")]
     [SerializeField] private float userZoom = 1f;
@@ -89,6 +97,7 @@ public class ZEDFOVFiller : MonoBehaviour
     const string PP_OFFX = "zedUserOffsetX";
     const string PP_OFFY = "zedUserOffsetY";
     const string PP_CONV = "zedZoomConverge";
+    const string PP_IPD  = "zedIPDShift";
     const string PP_CSX  = "zedCanvasScaleX";
     const string PP_CSY  = "zedCanvasScaleY";
     const string PP_CDEP = "zedCanvasDepth";
@@ -156,6 +165,17 @@ public class ZEDFOVFiller : MonoBehaviour
     public float UserZoom => userZoom;
     public float UserOffsetX => userOffsetX;
     public float UserOffsetY => userOffsetY;
+    public float IPDShift => ipdShift;
+
+    /// <summary>Adjust the per-eye IPD/convergence shift. dir = +1 / -1. Helps the magnified stereo
+    /// fuse (reduces the double-vision "blur" when zoomed in).</summary>
+    public void NudgeIPD(float dir)
+    {
+        ipdShift = Mathf.Clamp(ipdShift + dir * ipdStep, -maxIPD, maxIPD);
+    }
+
+    public void IPDUp()   => NudgeIPD(+1f);
+    public void IPDDown() => NudgeIPD(-1f);
 
     /// <summary>Zoom in/out. dir = +1 zooms in, -1 zooms out.</summary>
     public void NudgeZoom(float dir)
@@ -191,6 +211,7 @@ public class ZEDFOVFiller : MonoBehaviour
         PlayerPrefs.SetFloat(PP_OFFX, userOffsetX);
         PlayerPrefs.SetFloat(PP_OFFY, userOffsetY);
         PlayerPrefs.SetFloat(PP_CONV, zoomConvergence);
+        PlayerPrefs.SetFloat(PP_IPD,  ipdShift);
         PlayerPrefs.Save();
     }
 
@@ -201,6 +222,7 @@ public class ZEDFOVFiller : MonoBehaviour
         userZoom = 1f;
         userOffsetX = 0f;
         userOffsetY = 0f;
+        ipdShift = 0f;
     }
 
     void LoadReposition()
@@ -209,6 +231,17 @@ public class ZEDFOVFiller : MonoBehaviour
         userOffsetX     = PlayerPrefs.GetFloat(PP_OFFX, userOffsetX);
         userOffsetY     = PlayerPrefs.GetFloat(PP_OFFY, userOffsetY);
         zoomConvergence = PlayerPrefs.GetFloat(PP_CONV, zoomConvergence);
+        ipdShift        = PlayerPrefs.GetFloat(PP_IPD,  ipdShift);
+        // Self-heal a runaway / legacy saved IPD (e.g. one driven far past the usable range
+        // by the hold-to-repeat button) so the stereo feed fuses correctly from launch with
+        // NO manual reset. Anything beyond the clamp is discarded back to 0 and the stored
+        // value is corrected once so it stays fixed on subsequent launches.
+        if (Mathf.Abs(ipdShift) > maxIPD)
+        {
+            ipdShift = 0f;
+            PlayerPrefs.SetFloat(PP_IPD, 0f);
+            PlayerPrefs.Save();
+        }
         canvasScaleX    = PlayerPrefs.GetFloat(PP_CSX,  canvasScaleX);
         canvasScaleY    = PlayerPrefs.GetFloat(PP_CSY,  canvasScaleY);
         canvasDepth     = PlayerPrefs.GetFloat(PP_CDEP, canvasDepth);

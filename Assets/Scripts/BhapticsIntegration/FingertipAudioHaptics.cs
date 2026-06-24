@@ -1,105 +1,129 @@
 using UnityEngine;
 
 /// <summary>
-/// Techno-synth fingertip audio — an alternative to vibrotactile haptic gloves.
+/// Glass-armonica fingertip audio — an alternative to vibrotactile haptic gloves.
 ///
-/// Each finger maps to a distinct note across two octaves (left hand lower,
-/// right hand higher), mirroring a piano keyboard layout.
+/// Each finger maps to a distinct note tuned in perfect-5th steps (~7 semitones),
+/// giving a 2.3-octave span per hand with unmistakably different tones per finger.
 ///
-///   Left  — Palm:G2  Little:C3  Ring:E3  Middle:G3  Index:B3  Thumb:D4
-///   Right — Thumb:E4  Index:G4  Middle:B4  Ring:D5  Little:F5  Palm:C5
+///   Left  (low) — Palm:G2  Little:D3  Ring:A3  Middle:E4  Index:B4  Thumb:F#5
+///   Right (high) — Palm:C#4  Thumb:G#4  Index:D#5  Middle:A#5  Ring:F6  Little:C7
 ///
-/// SOUND DESIGN — Daft Punk / smooth electronic pad character
-///   Three slightly detuned bandlimited sawtooth oscillators (supersaw) pass through
-///   a gentle 2nd-order resonant low-pass filter.
+/// SOUND DESIGN — Smooth, round, Quest-startup-like character
+///   Nearly pure sine (fundamental + very subtle octave harmonic ≈ 0.02).
+///   Envelope: smooth sine-rise → cosine-fall (a half-sine bell shape). Both
+///   slopes are zero at the peak — no kink, no click. Quick and clean (~0.17 s).
+///   Post-attack vibrato fades in gradually (~0.10 s) so the onset stays pure.
+///   No sharp overtones, no exponential tail.
 ///
-///   Envelope: linear fade-in → single exponential release to silence.
-///   No separate decay/sustain phase — the note simply rises then gracefully fades.
+/// INTENSITY → PITCH + VOLUME (directional)
+///   Pressing harder (upward): pitch rises per level (0, +1, +1, +2 octaves).
+///   Releasing (downward): plays the REVERSED audio clip at a lower octave.
+///     The reversed envelope swells from silence to peak then cuts — clearly
+///     distinct from the forward ping and reinforces the "going down" feel.
+///   Volume also scales with level for additional differentiation.
 ///
-///   Filter: opens with the attack, closes slowly after it (can outlast the amplitude
-///   fade, keeping the tone warm and bright as it fades — characteristic pad quality).
+/// PALM HAPTICS
+///   Palm (slot [5]) is fully supported. Assign palm bone transforms if desired;
+///   otherwise the AudioSource falls back to this transform (still spatialized).
 ///
-/// TRIGGER BEHAVIOUR
-///   One-shot note on any threshold crossing in either direction (press in or release
-///   out). Reaching ForceLevel.None (finger fully lifted) is silent.
-///   Re-triggering restarts the note from the beginning (overwrite per finger).
+/// SPATIAL AUDIO MODES (useHeadSpatialAudio toggle)
+///   OFF — current behaviour: each finger/palm sound is located AT the hand.
+///   ON  — head-spatial: sounds are spread in an arc around the player's head —
+///         thumbs almost in front, pinkies almost behind, palms low around shoulder
+///         level, left hand on the left and right hand on the right. The arc follows
+///         the player's head position + yaw (so the vertical drop stays world-down).
+///   headHandSpatialBlend (0..1, used when ON) mixes the two: 0 = fully around the
+///   head, 1 = fully at the hands; in between the sounds stay spaced around the head
+///   but their position is pulled toward the real hand location.
 ///
 /// SETUP
 ///   1. Add to same GameObject as WebRTCHapticReceiver.
-///   2. Enable "Use Audio Haptics" on WebRTCHapticReceiver and assign this component.
-///   3. Drag avatar fingertip bone transforms into Left/Right arrays (thumb → palm order).
+///   2. Enable "Use Audio Haptics" and assign this component on WebRTCHapticReceiver.
+///   3. Optionally assign fingertip + palm bone transforms (thumb[0] … palm[5]).
 /// </summary>
 public class FingertipAudioHaptics : MonoBehaviour
 {
-    // ── Note frequencies (Hz) ─────────────────────────────────────────────────
+    // ── Note frequencies (Hz) — perfect-5th steps ────────────────────────────
     // Slot order: [0]=thumb [1]=index [2]=middle [3]=ring [4]=little [5]=palm
-    //
-    // Left hand — pinky(low) → thumb(high), mirrors piano left hand.
+
+    // Left — P5 steps from D3 (little=low → thumb=high). Palm=G2 (P5 below D3).
     private static readonly float[] LEFT_FREQ =
     {
-        293.66f,  // [0] Thumb  → D4
-        246.94f,  // [1] Index  → B3
-        196.00f,  // [2] Middle → G3
-        164.81f,  // [3] Ring   → E3
-        130.81f,  // [4] Little → C3
-         98.00f,  // [5] Palm   → G2
+        739.99f,  // [0] Thumb  → F#5
+        493.88f,  // [1] Index  → B4
+        329.63f,  // [2] Middle → E4
+        220.00f,  // [3] Ring   → A3
+        146.83f,  // [4] Little → D3
+         98.00f,  // [5] Palm   → G2  (deep body contact)
     };
 
-    // Right hand — thumb(low) → pinky(high), mirrors piano right hand.
+    // Right — P5 steps from G#4 (thumb=low → little=high). Palm=C#4 (P5 below G#4).
     private static readonly float[] RIGHT_FREQ =
     {
-        329.63f,  // [0] Thumb  → E4
-        392.00f,  // [1] Index  → G4
-        493.88f,  // [2] Middle → B4
-        587.33f,  // [3] Ring   → D5
-        698.46f,  // [4] Little → F5
-        523.25f,  // [5] Palm   → C5
+        415.30f,  // [0] Thumb  → G#4
+        622.25f,  // [1] Index  → D#5
+        932.33f,  // [2] Middle → A#5
+       1396.91f,  // [3] Ring   → F6
+       2093.00f,  // [4] Little → C7  (bright crystal — glass armonica soprano)
+        277.18f,  // [5] Palm   → C#4 (body contact, below finger range)
     };
 
     // ── Inspector ─────────────────────────────────────────────────────────────
     [Header("Fingertip Transforms — Left Hand  (thumb 0 … palm 5)")]
-    [Tooltip("Avatar left-hand fingertip bones: thumb, index, middle, ring, little, palm.")]
+    [Tooltip("Avatar left-hand bones: thumb, index, middle, ring, little, palm. " +
+             "Leave null to fall back to this transform (still spatialized).")]
     public Transform[] leftFingertipTransforms  = new Transform[6];
 
     [Header("Fingertip Transforms — Right Hand  (thumb 0 … palm 5)")]
-    [Tooltip("Avatar right-hand fingertip bones: thumb, index, middle, ring, little, palm.")]
+    [Tooltip("Avatar right-hand bones: thumb, index, middle, ring, little, palm.")]
     public Transform[] rightFingertipTransforms = new Transform[6];
 
     [Header("Volume")]
-    [Tooltip("Master volume for all triggered notes.")]
     [Range(0f, 1f)] public float masterVolume = 0.80f;
 
-    [Header("Octave by Force Level")]
-    [Tooltip("Octave offset from the finger's base note when each level is reached.\n" +
-             "0 = base note, 1 = one octave up (2× pitch), -1 = one octave down (0.5× pitch).")]
-    public int lightOctave   = -1;
-    public int mediumOctave  =  0;
-    public int highOctave    =  1;
-    public int maximumOctave =  2;
+    [Header("Volume by Force Level")]
+    [Tooltip("Note loudness (fraction of masterVolume) at each level.")]
+    [Range(0f, 1f)] public float lightVolume   = 0.35f;
+    [Range(0f, 1f)] public float mediumVolume  = 0.60f;
+    [Range(0f, 1f)] public float highVolume    = 0.82f;
+    [Range(0f, 1f)] public float maximumVolume = 1.00f;
+
+    [Header("Octave by Intensity — Pressing (upward level transitions)")]
+    [Tooltip("Pitch offset in octaves when pressing INTO each level. " +
+             "Positive = higher pitch (1.0 = one octave up, AudioSource.pitch × 2).")]
+    [Range(-3f, 4f)] public float lightPressOctave   =  0f;
+    [Range(-3f, 4f)] public float mediumPressOctave  =  1f;
+    [Range(-3f, 4f)] public float highPressOctave    =  1f;
+    [Range(-3f, 4f)] public float maximumPressOctave =  2f;
+
+    [Header("Octave by Intensity — Releasing (downward, plays reversed clip)")]
+    [Tooltip("Pitch offset in octaves when releasing INTO each level. " +
+             "The audio plays REVERSED (swell-to-peak, cut-off). " +
+             "Negative = lower than base note — reinforces the 'going down' feel.")]
+    [Range(-4f, 3f)] public float lightRelOctave   = -1f;
+    [Range(-4f, 3f)] public float mediumRelOctave  = -1f;
+    [Range(-4f, 3f)] public float highRelOctave    =  0f;
+    [Range(-4f, 3f)] public float maximumRelOctave =  0f;
 
     [Header("Amplitude Envelope  (Play Mode restart required after changes)")]
-    [Tooltip("Linear fade-in time. Longer = softer entry, shorter = more percussive.")]
-    [Range(0.01f, 0.3f)]  public float attackSeconds = 0.08f;
-    [Tooltip("Time for the note to fade from peak to silence after the attack.")]
-    [Range(0.2f, 4.0f)]   public float releaseDecay  = 1.6f;
+    [Tooltip("Sine-rise time to peak. Longer = softer/rounder onset.")]
+    [Range(0.005f, 0.10f)] public float attackSeconds = 0.025f;
+    [Tooltip("Cosine-fall time from peak to silence. Keep short for a snappy notification ping.")]
+    [Range(0.02f, 0.22f)]  public float releaseDecay  = 0.10f;
+    [Tooltip("Hard ceiling on total note length (attack + release). Notes never exceed this, " +
+             "regardless of the values above — keeps every note a short notification tone.")]
+    [Range(0.05f, 0.25f)]  public float maxNoteDuration = 0.25f;
 
-    [Header("Filter  (Play Mode restart required after changes)")]
-    [Tooltip("Low-pass cutoff at the note start — higher = warmer, more open sound.")]
-    [Range(200f, 4000f)]   public float filterMin      = 1200f;
-    [Tooltip("Low-pass cutoff at the brightest point of the note.")]
-    [Range(1000f, 18000f)] public float filterMax      = 4800f;
-    [Tooltip("Time for the filter to open from filterMin to filterMax during the attack.")]
-    [Range(0.01f, 0.4f)]   public float filterAttack   = 0.05f;
-    [Tooltip("Time for the filter to close back toward filterMin after the attack peak.\n" +
-             "Set longer than releaseDecay to keep the tone bright as it fades (pad character).")]
-    [Range(0.2f, 6.0f)]    public float filterRelease  = 2.8f;
-    [Tooltip("Resonance peak at the cutoff — keep low for clean Daft Punk tone.")]
-    [Range(0f, 3f)]        public float resonance      = 0.20f;
-
-    [Header("Oscillator")]
-    [Tooltip("Frequency spread between the three supersaw oscillators. " +
-             "Lower = tighter unison, higher = chorus-like width.")]
-    [Range(0f, 0.025f)]    public float detuneAmount   = 0.005f;
+    [Header("Glass Armonica Timbre  (Play Mode restart required after changes)")]
+    [Tooltip("Vibrato oscillation rate (Hz).")]
+    [Range(1f, 12f)]      public float vibratoRate   = 5.5f;
+    [Tooltip("Vibrato depth as a fraction of fundamental frequency (~0.003 ≈ 5 cents).")]
+    [Range(0f, 0.02f)]    public float vibratoDepth  = 0.003f;
+    [Tooltip("Time after attack peak for vibrato to reach full depth (organic fade-in).")]
+    [Range(0f, 0.4f)]     public float vibratoFadeIn = 0.10f;
+    [Tooltip("2nd harmonic amplitude (octave above fundamental). Keep low for purity.")]
+    [Range(0f, 0.20f)]    public float harmonic2Gain = 0.02f;
 
     [Header("Force Thresholds  (keep in sync with WebRTCHapticReceiver)")]
     [Range(0f, 0.2f)] public float sensorFloor   = 0.05f;
@@ -107,35 +131,66 @@ public class FingertipAudioHaptics : MonoBehaviour
     [Range(0f, 1f)]   public float mediumCutoff  = 0.35f;
     [Range(0f, 1f)]   public float highCutoff    = 0.60f;
     [Range(0f, 1f)]   public float maximumCutoff = 0.85f;
-    [Tooltip("Dead zone below each threshold: force must drop this far below a level's entry point before exiting it. " +
-             "Prevents rapid re-triggering from sensor noise near a boundary.")]
+    [Tooltip("Hysteresis dead zone below each threshold to suppress noise at boundaries.")]
     [Range(0f, 0.15f)] public float hysteresisAmount = 0.05f;
 
-    [Header("3D Spatialization")]
+    [Header("3D Spatialization (direction only — distance never changes volume)")]
+    [Tooltip("Distance settings are kept for reference but do NOT attenuate volume: a flat " +
+             "custom rolloff curve holds gain at 1.0 at every distance, so only force level " +
+             "controls loudness. Direction (panning) is still fully spatialized.")]
     public float audioMinDistance = 0.05f;
-    public float audioMaxDistance = 2.0f;
+    public float audioMaxDistance = 3.0f;
+
+    [Header("Spatial Audio Mode")]
+    [Tooltip("OFF = current implementation: each finger/palm sound is located AT the hand.\n" +
+             "ON = new head-spatial mode: sounds are spread in an arc around the player's head — " +
+             "thumbs almost in front, pinkies almost behind, palms low near the feet — with the " +
+             "left hand's sounds on the left and the right hand's on the right.")]
+    public bool useHeadSpatialAudio = false;
+
+    [Tooltip("HEAD / HAND SPATIAL BLEND (only used when head-spatial mode is ON).\n" +
+             "0 = sounds sit fully in the spread arc around the head.\n" +
+             "1 = sounds sit fully at the player's actual hands (same as the current mode).\n" +
+             "In between, the sounds stay spaced out around the head but their position is pulled " +
+             "toward the real hand location, so head layout and hand tracking are mixed.")]
+    [Range(0f, 1f)] public float headHandSpatialBlend = 0.0f;
+
+    [Header("Head Reference (head-spatial mode)")]
+    [Tooltip("Player head transform the spatial arc is built around. Auto-detects the main camera " +
+             "(CenterEyeAnchor) if left null.")]
+    public Transform headTransform;
+
+    [Header("Head-Spatial Layout  (when head-spatial mode is ON)")]
+    [Tooltip("Radius of the finger-sound arc around the head (metres).")]
+    [Range(0.2f, 1.5f)] public float headSpreadRadius = 0.6f;
+    [Tooltip("Azimuth of the THUMB sound from straight ahead (degrees). Small = near the front.")]
+    [Range(0f, 90f)]    public float thumbAzimuthDeg = 35f;
+    [Tooltip("Azimuth of the PINKY (little) sound from straight ahead (degrees). " +
+             "Near 180 = almost directly behind the player.")]
+    [Range(90f, 180f)]  public float pinkyAzimuthDeg = 160f;
+    [Tooltip("Vertical offset of the finger arc relative to head height (metres, + = up).")]
+    [Range(-0.5f, 0.5f)] public float fingerHeightOffset = 0.0f;
+    [Tooltip("How far BELOW the head the PALM sounds sit (metres). ~0.35 ≈ shoulder level.")]
+    [Range(0f, 2.0f)]   public float palmDropDistance = 0.35f;
+    [Tooltip("Sideways offset of the palm sounds from head centre (metres). Sign follows the hand.")]
+    [Range(0f, 0.8f)]   public float palmSideOffset = 0.3f;
+    [Tooltip("Forward offset of the palm sounds (metres, + = in front of the player).")]
+    [Range(-0.5f, 0.5f)] public float palmForwardOffset = 0.15f;
 
     [Header("Input Smoothing")]
-    [Tooltip("Exponential moving-average weight on the previous sample (0 = no smoothing, 0.95 = heavy).\n" +
-             "Raise this if sensor noise causes spurious note triggers at low force.")]
+    [Tooltip("Exponential moving-average weight on the prior sample (0 = none, 0.95 = heavy). " +
+             "Together with the hysteresis dead zone this suppresses noise-triggered re-fires, " +
+             "so every genuine level change can fire immediately and overwrite the previous note.")]
     [Range(0f, 0.99f)] public float smoothingFactor = 0.80f;
-
-    [Header("Debounce")]
-    [Tooltip("Minimum seconds between notes on the same finger. Prevents rapid multi-level firing " +
-             "when sensor values cross several thresholds in quick succession. " +
-             "Set shorter than the expected time between deliberate level changes.")]
-    [Range(0.05f, 2.0f)] public float minRetriggerSeconds = 0.20f;
 
     [Header("Debug")]
     public bool showDebugLogs = false;
 
     // ── Constants ─────────────────────────────────────────────────────────────
-    private const int   FINGER_COUNT  = 6;
-    private const int   SAMPLE_RATE   = 44100;
-    private const int   MAX_HARMONICS = 36;
-    private const float TWO_PI        = 6.28318530f;
+    private const int   FINGER_COUNT = 6;
+    private const int   SAMPLE_RATE  = 44100;
+    private const float TWO_PI       = 6.28318530f;
 
-    // Fast sine via lookup table (shared across all instances)
     private const int   SIN_SIZE  = 8192;
     private const float SIN_SCALE = SIN_SIZE / TWO_PI;
 
@@ -151,135 +206,169 @@ public class FingertipAudioHaptics : MonoBehaviour
     private static float FastSin(float phase)
     {
         int idx = (int)(phase * SIN_SCALE) & (SIN_SIZE - 1);
-        return idx >= 0 ? _sinTable[idx] : _sinTable[idx + SIN_SIZE];
+        return _sinTable[idx >= 0 ? idx : idx + SIN_SIZE];
     }
 
     // ── Runtime state ─────────────────────────────────────────────────────────
     private AudioSource[] _leftSrc,  _rightSrc;
-    private AudioClip[]   _leftClip, _rightClip;
+
+    // Forward clips for press (upward) transitions.
+    private AudioClip[] _leftClipFwd,  _rightClipFwd;
+    // Reversed clips for release (downward) transitions — sample data flipped.
+    private AudioClip[] _leftClipRev,  _rightClipRev;
 
     private enum ForceLevel { None, Light, Medium, High, Maximum }
-    private readonly ForceLevel[] _leftLevel  = new ForceLevel[FINGER_COUNT];
-    private readonly ForceLevel[] _rightLevel = new ForceLevel[FINGER_COUNT];
-    private readonly float[]      _leftSmoothed      = new float[FINGER_COUNT];
-    private readonly float[]      _rightSmoothed     = new float[FINGER_COUNT];
-    private readonly float[]      _leftLastTrigger   = new float[FINGER_COUNT];
-    private readonly float[]      _rightLastTrigger  = new float[FINGER_COUNT];
+    private readonly ForceLevel[] _leftLevel     = new ForceLevel[FINGER_COUNT];
+    private readonly ForceLevel[] _rightLevel    = new ForceLevel[FINGER_COUNT];
+    private readonly float[]      _leftSmoothed  = new float[FINGER_COUNT];
+    private readonly float[]      _rightSmoothed = new float[FINGER_COUNT];
+
+    private Transform _cachedHead; // resolved head transform (CenterEyeAnchor / main camera)
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
     void Start()
     {
-        _leftClip  = GenerateClips(LEFT_FREQ);
-        _rightClip = GenerateClips(RIGHT_FREQ);
-        _leftSrc   = BuildSources("L", leftFingertipTransforms,  _leftClip);
-        _rightSrc  = BuildSources("R", rightFingertipTransforms, _rightClip);
+        _leftClipFwd  = GenerateClips(LEFT_FREQ);
+        _leftClipRev  = ReverseClips(_leftClipFwd);
+        _rightClipFwd = GenerateClips(RIGHT_FREQ);
+        _rightClipRev = ReverseClips(_rightClipFwd);
+
+        // AudioSources are owned by this component (positioned each frame in LateUpdate),
+        // so the same sources serve both hand-located and head-spatial modes.
+        _leftSrc  = BuildSources("L", _leftClipFwd);
+        _rightSrc = BuildSources("R", _rightClipFwd);
+
+        // Place them once so the very first note isn't emitted from the origin.
+        UpdateSourcePositions();
+    }
+
+    // Keep each finger/palm AudioSource at the correct world position for the active mode.
+    // LateUpdate so it runs after hand/head tracking has written this frame's transforms.
+    void LateUpdate()
+    {
+        UpdateSourcePositions();
     }
 
     void OnDestroy()
     {
-        if (_leftClip  != null) foreach (var c in _leftClip)  { if (c) Destroy(c); }
-        if (_rightClip != null) foreach (var c in _rightClip) { if (c) Destroy(c); }
+        DestroyClips(_leftClipFwd);  DestroyClips(_leftClipRev);
+        DestroyClips(_rightClipFwd); DestroyClips(_rightClipRev);
     }
 
     // ── Public API ────────────────────────────────────────────────────────────
     public void SendHapticsForHand(bool isLeft, float[] fingerValues)
     {
-        AudioSource[] srcs        = isLeft ? _leftSrc          : _rightSrc;
-        ForceLevel[]  levels      = isLeft ? _leftLevel        : _rightLevel;
-        float[]       smoothed    = isLeft ? _leftSmoothed     : _rightSmoothed;
-        float[]       lastTrigger = isLeft ? _leftLastTrigger  : _rightLastTrigger;
+        AudioSource[] srcs     = isLeft ? _leftSrc      : _rightSrc;
+        ForceLevel[]  levels   = isLeft ? _leftLevel    : _rightLevel;
+        float[]       smoothed = isLeft ? _leftSmoothed : _rightSmoothed;
+        AudioClip[]   fwdClips = isLeft ? _leftClipFwd  : _rightClipFwd;
+        AudioClip[]   revClips = isLeft ? _leftClipRev  : _rightClipRev;
 
         for (int i = 0; i < FINGER_COUNT; i++)
         {
             if (srcs == null || srcs[i] == null) continue;
 
-            float raw        = Mathf.Clamp01(i < fingerValues.Length ? fingerValues[i] : 0f);
-            smoothed[i]      = smoothingFactor * smoothed[i] + (1f - smoothingFactor) * raw;
-            ForceLevel level = ClassifyLevel(smoothed[i], levels[i]);
+            float raw   = Mathf.Clamp01(i < fingerValues.Length ? fingerValues[i] : 0f);
+            smoothed[i] = smoothingFactor * smoothed[i] + (1f - smoothingFactor) * raw;
+            ForceLevel lv = ClassifyLevel(smoothed[i], levels[i]);
 
-            // Fire on any level change except to None (lifting is silent),
-            // gated by per-finger cooldown to prevent rapid multi-level bursts.
-            float now = Time.unscaledTime;
-            if (level != levels[i] && level != ForceLevel.None &&
-                now - lastTrigger[i] >= minRetriggerSeconds)
+            // Any genuine level change fires immediately and overwrites the previous note —
+            // in BOTH directions. A fast press never sticks on the lower note (the higher one
+            // takes over the instant its threshold is crossed); a fast release never sticks on
+            // the higher reversed note (the lower one takes over the instant force drops past
+            // it). Stop() before Play() on the shared per-finger AudioSource guarantees the
+            // overwrite. Hysteresis + input smoothing suppress noise chatter, so no debounce
+            // lockout is needed in either direction.
+            if (lv != levels[i] && lv != ForceLevel.None)
             {
-                srcs[i].volume = masterVolume;
-                srcs[i].pitch  = Mathf.Pow(2f, LevelToOctave(level));
+                bool isUpward = (int)lv > (int)levels[i];
+
+                // Downward transitions use the reversed clip — swell-to-peak then cut-off.
+                srcs[i].clip   = isUpward ? fwdClips[i] : revClips[i];
+                srcs[i].volume = masterVolume * LevelToVolumeFraction(lv);
+                srcs[i].pitch  = Mathf.Pow(2f,
+                    isUpward ? LevelToPressOctave(lv) : LevelToReleaseOctave(lv));
                 srcs[i].Stop();
                 srcs[i].Play();
-                lastTrigger[i] = now;
 
                 if (showDebugLogs)
-                    Debug.Log($"[AudioHaptics] {(isLeft?"L":"R")}[{i}] {levels[i]}→{level} " +
-                              $"smoothed={smoothed[i]:F3} octave={LevelToOctave(level)} pitch={srcs[i].pitch:F2}");
+                    Debug.Log($"[AudioHaptics] {(isLeft ? "L" : "R")}[{i}] " +
+                              $"{levels[i]}→{lv} {(isUpward ? "▲fwd" : "▼rev")} " +
+                              $"pitch={srcs[i].pitch:F2} vol={srcs[i].volume:F2}");
             }
 
-            levels[i] = level;
+            levels[i] = lv;
         }
     }
 
     // ── Clip generation ───────────────────────────────────────────────────────
+    // Envelope: sine-rise (0→peak) then cosine-fall (peak→0).
+    // Both slopes are zero at the peak — no kink, no click.
+    // Vibrato fades in gradually after the peak so the onset stays pure.
+    // Nearly pure sine (fundamental + very subtle octave harmonic).
     AudioClip[] GenerateClips(float[] freqs)
     {
-        float clipDuration = attackSeconds + releaseDecay + 0.1f;
-        int   frames       = Mathf.RoundToInt(SAMPLE_RATE * clipDuration);
-
-        // Amplitude: linear attack → single exponential release to silence
-        float releaseRate = -Mathf.Log(0.001f) / Mathf.Max(releaseDecay, 0.0001f);
-
-        // Filter envelope constants
-        // Opens with the attack (rises quickly to 1.0 by filterAttack)
-        float filterOpenRate  = -Mathf.Log(0.01f) / Mathf.Max(filterAttack,  0.0001f);
-        // Closes after the attack (slowly falls back toward filterMin)
-        float filterCloseRate = -Mathf.Log(0.02f) / Mathf.Max(filterRelease, 0.0001f);
+        // Hard-cap total note length. If attack+release exceeds the ceiling, scale both
+        // down proportionally so the bell shape is preserved but the note stays short.
+        float attack  = attackSeconds;
+        float release = releaseDecay;
+        float sum     = attack + release;
+        if (sum > maxNoteDuration && sum > 0f)
+        {
+            float k = maxNoteDuration / sum;
+            attack  *= k;
+            release *= k;
+        }
+        float totalDur     = attack + release;
+        int   frames       = Mathf.RoundToInt(SAMPLE_RATE * totalDur);
+        float vibratoInc   = TWO_PI * vibratoRate / SAMPLE_RATE;
+        float vibFadeRate  = Mathf.Max(vibratoFadeIn, 0.001f);
 
         var clips = new AudioClip[freqs.Length];
 
         for (int fi = 0; fi < freqs.Length; fi++)
         {
-            float f  = freqs[fi];
-            float f2 = f * (1f + detuneAmount);
-            float f3 = f * (1f - detuneAmount * 0.72f); // asymmetric detune for richer beating
+            float f    = freqs[fi];
+            float inc1 = TWO_PI * f       / SAMPLE_RATE; // fundamental
+            float inc2 = TWO_PI * f * 2f  / SAMPLE_RATE; // octave harmonic
 
-            int maxH1 = Mathf.Min(Mathf.FloorToInt(SAMPLE_RATE * 0.5f / f),  MAX_HARMONICS);
-            int maxH2 = Mathf.Min(Mathf.FloorToInt(SAMPLE_RATE * 0.5f / f2), MAX_HARMONICS);
-            int maxH3 = Mathf.Min(Mathf.FloorToInt(SAMPLE_RATE * 0.5f / f3), MAX_HARMONICS);
-
-            // Phase accumulators (avoids floating-point drift from large t*n*f products)
-            var ph1 = new float[maxH1]; var pi1 = new float[maxH1];
-            var ph2 = new float[maxH2]; var pi2 = new float[maxH2];
-            var ph3 = new float[maxH3]; var pi3 = new float[maxH3];
-
-            for (int n = 1; n <= maxH1; n++) pi1[n-1] = TWO_PI * n * f  / SAMPLE_RATE;
-            for (int n = 1; n <= maxH2; n++) pi2[n-1] = TWO_PI * n * f2 / SAMPLE_RATE;
-            for (int n = 1; n <= maxH3; n++) pi3[n-1] = TWO_PI * n * f3 / SAMPLE_RATE;
-
-            var data = new float[frames];
+            float ph1 = 0f, ph2 = 0f, phV = 0f;
+            var   data = new float[frames];
 
             for (int s = 0; s < frames; s++)
             {
                 float t = s / (float)SAMPLE_RATE;
 
-                // ── Amplitude envelope: rise → fall ─────────────────────────
-                float amp = t < attackSeconds
-                    ? t / attackSeconds                                        // linear attack
-                    : Mathf.Exp(-releaseRate * (t - attackSeconds));           // exponential release
+                // ── Bell envelope (sine-rise / cosine-fall) ─────────────────
+                float amp;
+                if (t < attack)
+                {
+                    // Sine rise: smooth 0 → 1, zero slope at both ends.
+                    amp = Mathf.Sin(Mathf.PI * 0.5f * t / attack);
+                }
+                else if (t < totalDur)
+                {
+                    // Cosine fall: smooth 1 → 0, zero slope at both ends.
+                    float u = (t - attack) / release;
+                    amp = Mathf.Cos(Mathf.PI * 0.5f * u);
+                }
+                else
+                {
+                    amp = 0f;
+                }
 
-                // ── Filter envelope ─────────────────────────────────────────
-                // Rises quickly to peak brightness, then slowly closes back.
-                // filterRelease > releaseDecay → filter stays warm/bright as amp fades.
-                float fOpen  = 1f - Mathf.Exp(-filterOpenRate * t);           // 0→1 during attack
-                float fClose = t > attackSeconds
-                    ? Mathf.Exp(-filterCloseRate * (t - attackSeconds))        // 1→0 after attack
-                    : 1f;
-                float cutoffHz = Mathf.Lerp(filterMin, filterMax, Mathf.Clamp01(fOpen * fClose));
+                // ── Vibrato — gradual fade-in after attack peak ─────────────
+                float postAttack = Mathf.Max(0f, t - attack);
+                float vibEnv     = Mathf.Clamp01(postAttack / vibFadeRate);
+                float vibMod     = 1f + vibratoDepth * vibEnv * FastSin(phV);
+                phV += vibratoInc;
+                if (phV >= TWO_PI) phV -= TWO_PI;
 
-                // ── Three oscillators ───────────────────────────────────────
-                float osc1 = SynthOsc(ph1, pi1, maxH1, f,  cutoffHz);
-                float osc2 = SynthOsc(ph2, pi2, maxH2, f2, cutoffHz);
-                float osc3 = SynthOsc(ph3, pi3, maxH3, f3, cutoffHz);
+                // ── Oscillator — nearly pure sine ───────────────────────────
+                data[s] = (FastSin(ph1) + harmonic2Gain * FastSin(ph2)) * amp;
 
-                data[s] = (0.50f * osc1 + 0.30f * osc2 + 0.20f * osc3) * amp;
+                ph1 += inc1 * vibMod; if (ph1 >= TWO_PI) ph1 -= TWO_PI;
+                ph2 += inc2 * vibMod; if (ph2 >= TWO_PI) ph2 -= TWO_PI;
             }
 
             // Normalise to [-1, 1]
@@ -289,7 +378,7 @@ public class FingertipAudioHaptics : MonoBehaviour
             if (peak > 0f)
                 for (int s = 0; s < frames; s++) data[s] /= peak;
 
-            var clip = AudioClip.Create($"DPSynth_{f:F0}Hz", frames, 1, SAMPLE_RATE, false);
+            var clip = AudioClip.Create($"GlassArmonica_{f:F0}Hz", frames, 1, SAMPLE_RATE, false);
             clip.SetData(data, 0);
             clips[fi] = clip;
         }
@@ -297,74 +386,161 @@ public class FingertipAudioHaptics : MonoBehaviour
         return clips;
     }
 
-    // Bandlimited sawtooth through a gentle 2nd-order resonant LP filter.
-    // 2nd-order (12 dB/oct) is softer and less nasal than the previous 3rd-order.
-    float SynthOsc(float[] phases, float[] phaseIncs, int maxH, float freq, float cutoffHz)
+    // Build reversed clips by flipping the sample array of each forward clip.
+    // Reversed envelope: the cosine-fall appears first (gradual swell), the
+    // sine-rise appears last (short sharp peak then cut) — a clearly distinct
+    // "downward" character compared to the forward ping.
+    AudioClip[] ReverseClips(AudioClip[] fwd)
     {
-        float sum = 0f;
-        for (int n = 0; n < maxH; n++)
+        var rev = new AudioClip[fwd.Length];
+        for (int i = 0; i < fwd.Length; i++)
         {
-            int   harmNum = n + 1;
-            float x       = harmNum * freq / cutoffHz; // 1.0 = at cutoff, >1 = above
-
-            // 2nd-order LP: gentler -12 dB/oct rolloff (softer, less "ringy")
-            float lpW  = 1f / (1f + x * x);
-
-            // Subtle resonance peak near the cutoff (triangular, cheap)
-            float dist = Mathf.Abs(x - 1f);
-            float resW = resonance * Mathf.Max(0f, 1f - dist * 4f);
-
-            sum += FastSin(phases[n]) * Mathf.Clamp01(lpW + resW) / harmNum;
-
-            phases[n] += phaseIncs[n];
-            if (phases[n] >= TWO_PI) phases[n] -= TWO_PI;
+            if (fwd[i] == null) continue;
+            int     n    = fwd[i].samples;
+            var     data = new float[n];
+            fwd[i].GetData(data, 0);
+            System.Array.Reverse(data);
+            var clip = AudioClip.Create(fwd[i].name + "_Rev", n, 1, SAMPLE_RATE, false);
+            clip.SetData(data, 0);
+            rev[i] = clip;
         }
-
-        return (2f / Mathf.PI) * sum;
+        return rev;
     }
 
     // ── AudioSource setup ─────────────────────────────────────────────────────
-    AudioSource[] BuildSources(string side, Transform[] trs, AudioClip[] clips)
+    // Sources are parented to this component (NOT the hand bones). Their world position is
+    // driven each frame by UpdateSourcePositions() so one set of sources can be hand-located,
+    // head-spatial, or any blend of the two.
+    AudioSource[] BuildSources(string side, AudioClip[] clips)
     {
         var      srcs = new AudioSource[FINGER_COUNT];
         string[] lbl  = { "Thumb", "Index", "Middle", "Ring", "Little", "Palm" };
 
         for (int i = 0; i < FINGER_COUNT; i++)
         {
-            Transform parent = (trs != null && i < trs.Length && trs[i] != null)
-                ? trs[i] : transform;
-
             var go = new GameObject($"AudioHaptic_{side}_{lbl[i]}");
-            go.transform.SetParent(parent, false);
-            go.transform.localPosition = Vector3.zero;
+            go.transform.SetParent(transform, false);
 
             var src = go.AddComponent<AudioSource>();
-            src.clip        = clips[i];
-            src.loop        = false;
-            src.spatialBlend= 1.0f;
-            src.minDistance = audioMinDistance;
-            src.maxDistance = audioMaxDistance;
-            src.rolloffMode = AudioRolloffMode.Logarithmic;
-            src.volume      = 0f;
-            src.playOnAwake = false;
+            src.clip         = clips[i];
+            src.loop         = false;
+            src.spatialBlend = 1.0f;   // full 3D so direction / panning is preserved
+            src.dopplerLevel = 0f;     // no pitch shift from hand or head motion
+            src.minDistance  = audioMinDistance;
+            src.maxDistance  = audioMaxDistance;
+            // Direction-only spatialization: a FLAT rolloff curve (constant 1.0) means the
+            // distance to the source never attenuates the sound — extending your hand keeps the
+            // volume fixed. Loudness comes solely from force level (set per trigger), while 3D
+            // panning still localizes each finger/palm by direction.
+            src.rolloffMode  = AudioRolloffMode.Custom;
+            src.SetCustomCurve(AudioSourceCurveType.CustomRolloff,
+                               AnimationCurve.Constant(0f, 1f, 1f));
+            src.volume       = 0f;
+            src.playOnAwake  = false;
             srcs[i] = src;
         }
 
         return srcs;
     }
 
+    // ── Spatial positioning ─────────────────────────────────────────────────────
+    void UpdateSourcePositions()
+    {
+        // effectiveBlend: 1 = fully at hands (current mode). When head-spatial is on, the
+        // blend slider mixes from the head arc (0) toward the hands (1).
+        float blend = useHeadSpatialAudio ? Mathf.Clamp01(headHandSpatialBlend) : 1f;
+        PositionHand(true,  leftFingertipTransforms,  _leftSrc,  blend);
+        PositionHand(false, rightFingertipTransforms, _rightSrc, blend);
+    }
+
+    void PositionHand(bool isLeft, Transform[] trs, AudioSource[] srcs, float blend)
+    {
+        if (srcs == null) return;
+
+        // Only resolve the head frame when the head layout actually contributes (blend < 1).
+        bool       useHead = blend < 0.999f;
+        Vector3    headPos = Vector3.zero;
+        Quaternion headYaw = Quaternion.identity;
+        if (useHead)
+        {
+            Transform head = ResolveHead();
+            if (head != null)
+            {
+                headPos = head.position;
+                // Yaw only: keeps "down toward feet" world-vertical and front/back tied to
+                // the direction the player faces, without tilting when they look up/down.
+                headYaw = Quaternion.Euler(0f, head.eulerAngles.y, 0f);
+            }
+            else
+            {
+                useHead = false; // no head available — fall back to hand positions
+            }
+        }
+
+        for (int i = 0; i < FINGER_COUNT; i++)
+        {
+            if (srcs[i] == null) continue;
+
+            Transform handTr = (trs != null && i < trs.Length && trs[i] != null) ? trs[i] : null;
+            Vector3   handPos = handTr != null ? handTr.position : transform.position;
+
+            Vector3 pos;
+            if (!useHead)
+            {
+                pos = handPos; // current behaviour: sound at the hand
+            }
+            else
+            {
+                Vector3 spreadWorld = headPos + headYaw * GetHeadSpreadLocalOffset(i, isLeft);
+                pos = Vector3.Lerp(spreadWorld, handPos, blend);
+            }
+
+            srcs[i].transform.position = pos;
+        }
+    }
+
+    // Local offset (head-yaw space: x=right, y=up, z=forward) for the head-spatial arc.
+    //   Fingers 0..4 (thumb..pinky) sweep from near-front to near-behind along an arc.
+    //   Palm (5) sits lower than the arc (~shoulder level), offset to the hand's side.
+    Vector3 GetHeadSpreadLocalOffset(int finger, bool isLeft)
+    {
+        float side = isLeft ? -1f : 1f; // left hand on the left, right hand on the right
+
+        if (finger == 5) // palm — dropped below the head, ~shoulder level
+            return new Vector3(side * palmSideOffset, -palmDropDistance, palmForwardOffset);
+
+        // frac: 0 = thumb (front), 1 = little/pinky (behind)
+        float frac = finger / 4f;
+        float az   = Mathf.Lerp(thumbAzimuthDeg, pinkyAzimuthDeg, frac) * Mathf.Deg2Rad;
+
+        float x = Mathf.Sin(az) * headSpreadRadius * side;
+        float z = Mathf.Cos(az) * headSpreadRadius; // +front (thumb) → −back (pinky)
+        float y = fingerHeightOffset;
+        return new Vector3(x, y, z);
+    }
+
+    Transform ResolveHead()
+    {
+        if (headTransform != null) return headTransform;
+        if (_cachedHead != null)   return _cachedHead;
+        if (Camera.main != null)   _cachedHead = Camera.main.transform;
+        return _cachedHead;
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
-    // Stateful classification with hysteresis: upward crossings are immediate,
-    // downward crossings require force to drop hysteresisAmount below the entry
-    // threshold to avoid rapid re-triggering from sensor noise at boundaries.
+    void DestroyClips(AudioClip[] clips)
+    {
+        if (clips == null) return;
+        foreach (var c in clips) { if (c) Destroy(c); }
+    }
+
     ForceLevel ClassifyLevel(float force, ForceLevel current)
     {
         ForceLevel raw = ClassifyRaw(force);
-        if ((int)raw > (int)current) return raw;    // going up: always immediate
+        if ((int)raw > (int)current) return raw;
         if (raw == current) return current;
-        // going down: only leave if below (entry threshold - dead zone)
         if (force < EntryThreshold(current) - hysteresisAmount) return raw;
-        return current;                             // in hysteresis zone: stay
+        return current;
     }
 
     ForceLevel ClassifyRaw(float force)
@@ -385,12 +561,30 @@ public class FingertipAudioHaptics : MonoBehaviour
         return 0f;
     }
 
-    int LevelToOctave(ForceLevel level)
+    float LevelToVolumeFraction(ForceLevel level)
     {
-        if (level == ForceLevel.Light)   return lightOctave;
-        if (level == ForceLevel.Medium)  return mediumOctave;
-        if (level == ForceLevel.High)    return highOctave;
-        if (level == ForceLevel.Maximum) return maximumOctave;
-        return 0;
+        if (level == ForceLevel.Light)   return lightVolume;
+        if (level == ForceLevel.Medium)  return mediumVolume;
+        if (level == ForceLevel.High)    return highVolume;
+        if (level == ForceLevel.Maximum) return maximumVolume;
+        return 0f;
+    }
+
+    float LevelToPressOctave(ForceLevel level)
+    {
+        if (level == ForceLevel.Light)   return lightPressOctave;
+        if (level == ForceLevel.Medium)  return mediumPressOctave;
+        if (level == ForceLevel.High)    return highPressOctave;
+        if (level == ForceLevel.Maximum) return maximumPressOctave;
+        return 0f;
+    }
+
+    float LevelToReleaseOctave(ForceLevel level)
+    {
+        if (level == ForceLevel.Light)   return lightRelOctave;
+        if (level == ForceLevel.Medium)  return mediumRelOctave;
+        if (level == ForceLevel.High)    return highRelOctave;
+        if (level == ForceLevel.Maximum) return maximumRelOctave;
+        return 0f;
     }
 }

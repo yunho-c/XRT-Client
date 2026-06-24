@@ -34,6 +34,7 @@ public class VideoRepositionPanel : MonoBehaviour
     public Color panelColor  = new Color(0.07f, 0.07f, 0.09f, 0.92f);
     public Color buttonColor = new Color(1f, 1f, 1f, 0.14f);
     public Color zoomColor   = new Color(0.20f, 0.40f, 0.62f, 1f);
+    public Color ipdColor    = new Color(0.45f, 0.30f, 0.62f, 1f);
     public Color saveColor   = new Color(0.16f, 0.55f, 0.30f, 1f);
     public Color resetColor  = new Color(0.62f, 0.20f, 0.20f, 1f);
     public Color textColor   = new Color(1f, 1f, 1f, 0.92f);
@@ -54,7 +55,8 @@ public class VideoRepositionPanel : MonoBehaviour
         if (mode == AdjustMode.Feed)
             _readout.text = $"Zoom {fovFiller.UserZoom:0.00}\n" +
                             $"X {fovFiller.UserOffsetX:+0.000;-0.000}\n" +
-                            $"Y {fovFiller.UserOffsetY:+0.000;-0.000}";
+                            $"Y {fovFiller.UserOffsetY:+0.000;-0.000}\n" +
+                            $"IPD {fovFiller.IPDShift:+0.000;-0.000}";
         else
             _readout.text = $"W {fovFiller.CanvasScaleX:0.00}\n" +
                             $"H {fovFiller.CanvasScaleY:0.00}\n" +
@@ -92,6 +94,17 @@ public class VideoRepositionPanel : MonoBehaviour
             feed ? Act(() => fovFiller?.SaveReposition())  : Act(() => fovFiller?.SaveCanvas()));
         MakeButton("Reset", "Reset", resetColor, new Vector2(54f,  -126f), new Vector2(92f, 40f), false,
             feed ? Act(() => fovFiller?.ResetReposition()) : Act(() => fovFiller?.ResetCanvas()));
+
+        // Feed only: IPD +/- column stacked on the right (controls per-eye convergence so the
+        // magnified stereo stays fusible — fixes the blur/double-vision when zooming).
+        if (feed)
+        {
+            NewLabel("IPDLabel", root, "IPD", 11f, new Vector2(96f, 6f), new Vector2(40f, 16f));
+            MakeButton("IPDPlus",  "+", ipdColor, new Vector2(96f, -22f), new Vector2(38f, 40f), true,
+                Act(() => fovFiller?.IPDUp()));
+            MakeButton("IPDMinus", "-", ipdColor, new Vector2(96f, -64f), new Vector2(38f, 40f), true,
+                Act(() => fovFiller?.IPDDown()));
+        }
     }
 
     static UnityEngine.Events.UnityAction Act(System.Action a) => new UnityEngine.Events.UnityAction(a);

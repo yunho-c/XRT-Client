@@ -68,4 +68,24 @@ public class SettingsController : MonoBehaviour
         // ON = show the ghost-outline avatar during teleop; OFF = hide it entirely.
         if (teleopVisuals != null) teleopVisuals.SetShowAvatarDuringTeleop(isOn);
     }
+
+    // ── Remote-state sync (driven by UnityCommandReceiver / study manager) ──────
+    // When the study manager toggles a gate over the 'unity_cmds' channel, the
+    // in-VR checkbox must follow so the menu never disagrees with what the manager
+    // shows. SetIsOnWithoutNotify updates the toggle graphic WITHOUT re-firing
+    // onValueChanged (which would loop straight back into SetHapticsEnabled /
+    // SetAudioHapticsEnabled and re-drive the gate redundantly). We set the gate
+    // here too so this one call keeps visual + behaviour consistent.
+
+    public void SyncHapticsToggle(bool isOn)
+    {
+        if (hapticsToggle  != null) hapticsToggle.SetIsOnWithoutNotify(isOn);
+        if (hapticReceiver != null) hapticReceiver.SetVibrotactileEnabled(isOn);
+    }
+
+    public void SyncAudioHapticsToggle(bool isOn)
+    {
+        if (audioHapticsToggle != null) audioHapticsToggle.SetIsOnWithoutNotify(isOn);
+        if (hapticReceiver     != null) hapticReceiver.SetAudioHapticsEnabled(isOn);
+    }
 }

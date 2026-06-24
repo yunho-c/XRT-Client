@@ -42,6 +42,17 @@ public class UnityCommandReceiver : MonoBehaviour
              "shows/hides the display.")]
     public Toggle streamingDisplayToggle;
 
+    [Tooltip("Optional: the in-VR CloverUI SettingsController. When assigned, the Haptics and Audio " +
+             "Haptics toggle checkboxes are kept visually in sync whenever the study manager toggles " +
+             "those gates remotely, so the menu never disagrees with the manager. Auto-detected on " +
+             "Start if left null.")]
+    public SettingsController settingsController;
+
+    [Tooltip("Optional: the TeleopUIController (Power/Play-Pause buttons). When assigned, a remote " +
+             "`teleop_active` command from the study manager's Start/Stop Teleop button flips the in-VR " +
+             "Play/Pause button. Auto-detected on Start if left null.")]
+    public TeleopUIController teleopUIController;
+
     [Header("Debug")]
     public bool showDebugLogs = true;
 
@@ -69,6 +80,63 @@ public class UnityCommandReceiver : MonoBehaviour
         {
             webRTCController = FindFirstObjectByType<WebRTCController>();
         }
+        if (settingsController == null)
+        {
+            settingsController = FindFirstObjectByType<SettingsController>(FindObjectsInactive.Include);
+        }
+        if (teleopUIController == null)
+        {
+            teleopUIController = FindFirstObjectByType<TeleopUIController>(FindObjectsInactive.Include);
+        }
+
+        // Mirror genuine in-VR toggle changes back to the study manager so its button
+        // UI reflects what the operator does. These onValueChanged listeners fire ONLY
+        // on real user interaction — remote syncs from the manager use
+        // SetIsOnWithoutNotify (no event), so there is no echo back to the manager.
+        // (The streaming feed's reverse report is sent from ToggleStreamingConnection,
+        // which reflects the real connection state rather than mere viewport visibility.)
+        if (settingsController != null)
+        {
+            if (settingsController.hapticsToggle != null)
+            {
+                settingsController.hapticsToggle.onValueChanged.AddListener(OnVibrotactileToggledByUser);
+            }
+            if (settingsController.audioHapticsToggle != null)
+            {
+                settingsController.audioHapticsToggle.onValueChanged.AddListener(OnAudioHapticsToggledByUser);
+            }
+        }
+    }
+
+    // ── Reverse reporting (Unity → study manager) ──────────────────────────────
+    // One listener per in-VR toggle; fired only on real operator interaction.
+
+    void OnAudioHapticsToggledByUser(bool isOn)
+    {
+        ReportToggleState("toggle_audio_haptics", isOn);
+    }
+
+    void OnVibrotactileToggledByUser(bool isOn)
+    {
+        ReportToggleState("toggle_vibrotactile_haptics", isOn);
+    }
+
+    /// <summary>
+    /// Send the new state of an in-VR toggle back to the study manager over the
+    /// 'unity_state' channel so its button UI stays in sync with operator actions.
+    /// The command strings match what the manager sends, so it can route the update
+    /// to the matching button. Drops harmlessly if the channel is not open yet.
+    /// </summary>
+    void ReportToggleState(string command, bool enabled)
+    {
+        if (webRTCController == null) return;
+        string json = "{\"type\":\"unity_state\",\"command\":\"" + command +
+                      "\",\"enabled\":" + (enabled ? "true" : "false") + "}";
+        webRTCController.SendUnityState(json);
+        if (showDebugLogs)
+        {
+            Debug.Log($"[UnityCommandReceiver] Reported '{command}' enabled={enabled} to study manager.");
+        }
     }
 
     /// <summary>
@@ -88,6 +156,10 @@ public class UnityCommandReceiver : MonoBehaviour
         {
             Debug.Log($"[UnityCommandReceiver] '{channel.Label}' channel connected.");
         }
+        // NOTE: the study manager is authoritative on connect — it pushes all of its toggle
+        // states (incl. streaming) to overwrite the XR app, so Unity does NOT report its own
+        // state up at connect time (that would fight the manager's push). Runtime operator
+        // changes are still mirrored back via the reverse 'unity_state' reports below.
     }
 
     /// <summary>
@@ -145,7 +217,45 @@ public class UnityCommandReceiver : MonoBehaviour
         // on cancel — that would deactivate the receiver and break the retry).
         stereoReceiver.ToggleVideoStream(true);
         if (streamingDisplayToggle != null) streamingDisplayToggle.SetIsOnWithoutNotify(true);
-        stereoReceiver.ToggleConnection();
+        bool nowConnected = stereoReceiver.ToggleConnection();
+        // Mirror the resulting connection state back to the study manager so its
+        // Streaming Feed button reflects what the operator just did in VR.
+        ReportToggleState("toggle_streaming_connection", nowConnected);
+    }
+
+    /// <summary>
+    /// Remote entry point for the study manager's Streaming Feed button. Drives the actual
+    /// stream connection (not just visibility) so the manager can disconnect/reconnect the
+    /// feed exactly like the in-VR Streaming Connection button: connect=true starts the
+    /// stream, connect=false cancels it. The viewport is kept shown either way (matching the
+    /// in-VR button, which does not hide on cancel so a snagged attempt can be retried).
+    /// </summary>
+    public void SetStreamingConnection(bool connect)
+    {
+        if (stereoReceiver == null)
+        {
+            Debug.LogWarning("[UnityCommandReceiver] No stereoReceiver assigned; ignoring SetStreamingConnection.");
+            return;
+        }
+        // Idempotent: only act if Unity isn't already in the requested state. Critical for the
+        // manager's connect-time push — Unity auto-starts the stream on launch, so blindly
+        // calling StartStream() here would re-offer an already-connected peer (breaks it →
+        // "press to retry"), and blindly calling CancelConnection() would tear down a live feed.
+        if (stereoReceiver.IsStreamingActive == connect)
+        {
+            if (connect && streamingDisplayToggle != null) streamingDisplayToggle.SetIsOnWithoutNotify(true);
+            return;
+        }
+        if (connect)
+        {
+            stereoReceiver.ToggleVideoStream(true);
+            if (streamingDisplayToggle != null) streamingDisplayToggle.SetIsOnWithoutNotify(true);
+            stereoReceiver.StartStream();
+        }
+        else
+        {
+            stereoReceiver.CancelConnection("Disconnected by study manager.");
+        }
     }
 
     void HandleMessage(string message)
@@ -174,29 +284,61 @@ public class UnityCommandReceiver : MonoBehaviour
         switch (cmd.command)
         {
             case "toggle_audio_haptics":
-                if (hapticReceiver != null)
+                // Prefer the SettingsController so the in-VR Audio Haptics checkbox follows
+                // the remote state (no visual mismatch). Fall back to driving the gate
+                // directly if no menu is present in this scene.
+                if (settingsController != null)
+                {
+                    settingsController.SyncAudioHapticsToggle(cmd.enabled);
+                }
+                else if (hapticReceiver != null)
                 {
                     hapticReceiver.SetAudioHapticsEnabled(cmd.enabled);
                 }
                 else
                 {
-                    Debug.LogWarning("[UnityCommandReceiver] No WebRTCHapticReceiver assigned; ignoring toggle_audio_haptics.");
+                    Debug.LogWarning("[UnityCommandReceiver] No SettingsController or WebRTCHapticReceiver assigned; ignoring toggle_audio_haptics.");
                 }
                 break;
 
             case "toggle_vibrotactile_haptics":
-                if (hapticReceiver != null)
+                // Prefer the SettingsController so the in-VR Haptics checkbox follows the
+                // remote state. Fall back to the gate directly if no menu is present.
+                if (settingsController != null)
+                {
+                    settingsController.SyncHapticsToggle(cmd.enabled);
+                }
+                else if (hapticReceiver != null)
                 {
                     hapticReceiver.SetVibrotactileEnabled(cmd.enabled);
                 }
                 else
                 {
-                    Debug.LogWarning("[UnityCommandReceiver] No WebRTCHapticReceiver assigned; ignoring toggle_vibrotactile_haptics.");
+                    Debug.LogWarning("[UnityCommandReceiver] No SettingsController or WebRTCHapticReceiver assigned; ignoring toggle_vibrotactile_haptics.");
                 }
                 break;
 
             case "show_streaming_viewport":
+                // Visibility-only (kept for back-compat); the manager now drives the
+                // connection via toggle_streaming_connection below.
                 SetStreamingViewport(cmd.enabled);
+                break;
+
+            case "toggle_streaming_connection":
+                SetStreamingConnection(cmd.enabled);
+                break;
+
+            case "teleop_active":
+                // Study manager's green Start Teleop (true) / Stop (false) button — flip the
+                // in-VR Play/Pause button to match.
+                if (teleopUIController != null)
+                {
+                    teleopUIController.SetTeleopActiveFromRemote(cmd.enabled);
+                }
+                else
+                {
+                    Debug.LogWarning("[UnityCommandReceiver] No TeleopUIController; ignoring teleop_active.");
+                }
                 break;
 
             default:

@@ -46,6 +46,9 @@ public class WebRTCController : MonoBehaviour
   [Header("WebRTC Settings")]
   [Tooltip("Enable to automatically start the WebRTC connection on start")]
   public bool autoStartConnection = false;
+  [Tooltip("Seconds to wait for the connection to establish before giving up so the power " +
+           "button can't get stuck on 'connecting' (e.g. unreachable/malformed server).")]
+  public float connectTimeoutSeconds = 12f;
   [Tooltip("Enable to receive video stream")]
   public bool receiveVideo = true;
   [Tooltip("Default state for video stream visibility (overridden by PlayerPrefs)")]
@@ -56,8 +59,27 @@ public class WebRTCController : MonoBehaviour
   private RTCDataChannel cameraChannel;
   private RTCDataChannel bodyPoseChannel;
   private RTCDataChannel aprilTagChannel;
+  private RTCDataChannel unityStateChannel;
   private VideoStreamTrack videoTrack;
   private Coroutine _sendBodyPoseCoroutine;
+  private Coroutine _connectWatchdog;
+
+  // Teleop gate: the WebRTC connection (power button) can be up while teleop is paused.
+  // Body pose is only streamed to the server while _teleopActive is true (driven by the
+  // in-VR Play/Pause button via SetTeleopActive). Connecting alone does NOT teleop.
+  private bool _teleopActive = false;
+
+  /// <summary>Fired (on the main thread) when the peer connection becomes Connected (true)
+  /// or drops to Disconnected/Failed/Closed (false). The UI uses this to highlight the power
+  /// button and to auto-reset to the "off" state when the link is lost.</summary>
+  public event System.Action<bool> OnConnectionStateChanged;
+
+  /// <summary>True while the peer connection is established.</summary>
+  public bool IsConnected =>
+    pc != null && pc.ConnectionState == RTCPeerConnectionState.Connected;
+
+  /// <summary>True while teleop is actively streaming body pose (Play, not Pause).</summary>
+  public bool IsTeleopActive => _teleopActive;
 
   // Use a single volatile variable to store the latest pose data.
   // This avoids queuing and accumulating latency.
@@ -70,19 +92,14 @@ public class WebRTCController : MonoBehaviour
     string savedUrl = PlayerPrefs.GetString("serverUrl");
     if (!string.IsNullOrEmpty(savedUrl))
     {
-      try
-      {
-        System.Uri uri = new System.Uri(savedUrl);
-        if (!string.IsNullOrEmpty(uri.Host))
-        {
-          serverUrl = savedUrl;
-        }
-      }
-      catch (System.Exception)
-      {
-        Debug.LogWarning($"Ignoring invalid serverUrl from PlayerPrefs: {savedUrl}");
-      }
+      serverUrl = savedUrl;
     }
+    // Ensure the URL has an http(s):// scheme. A host like "mel06293d:8080/offer" with no
+    // scheme is malformed — the offer POST can't connect and the power button hangs at
+    // "trying to connect". Normalising here (and re-saving) fixes a bad stored value.
+    serverUrl = NormalizeServerUrl(serverUrl);
+    PlayerPrefs.SetString("serverUrl", serverUrl);
+    PlayerPrefs.Save();
 
     // Load video stream visibility setting
     bool savedVideoVisible = PlayerPrefs.GetInt("videoStreamVisible", videoStreamVisible ? 1 : 0) == 1;
@@ -169,19 +186,55 @@ public class WebRTCController : MonoBehaviour
     Debug.Log("Server URL set to: " + serverUrl);
   }
 
+  /// <summary>Prepend http:// when the server URL has no scheme, so a host like
+  /// "mel06293d:8080/offer" doesn't break the offer POST.</summary>
+  private string NormalizeServerUrl(string url)
+  {
+    if (string.IsNullOrEmpty(url)) return "http://localhost:8080/offer";
+    url = url.Trim();
+    if (!url.Contains("://")) url = "http://" + url;
+    return url;
+  }
+
   public void StartConnection()
   {
-    if (pc != null && (pc.ConnectionState == RTCPeerConnectionState.Connected || pc.ConnectionState == RTCPeerConnectionState.Connecting))
+    // Block a duplicate attempt for ANY live peer connection — including the brief "New"
+    // state right after CreatePeerConnection(). Two onValueChanged listeners (a leftover
+    // persistent one + the runtime TeleopUIController one) can both call this in the same
+    // frame; starting a second peer connection would overwrite the first mid-negotiation
+    // and the connection would hang. Only restart when there is no usable pc.
+    if (pc != null &&
+        pc.ConnectionState != RTCPeerConnectionState.Closed &&
+        pc.ConnectionState != RTCPeerConnectionState.Failed)
     {
-      Debug.LogWarning("WebRTC connection is already active or connecting.");
+      Debug.LogWarning($"WebRTC already {pc.ConnectionState}; ignoring duplicate StartConnection.");
       return;
     }
+    serverUrl = NormalizeServerUrl(serverUrl);
     statusText.text = "Starting WebRTC...";
     StartCoroutine(StartWebRTC());
+    if (_connectWatchdog != null) StopCoroutine(_connectWatchdog);
+    _connectWatchdog = StartCoroutine(ConnectWatchdog());
+  }
+
+  // Safety net: if the connection doesn't reach Connected within connectTimeoutSeconds,
+  // tear it down and notify the UI so the power button resets to "off" instead of hanging.
+  private IEnumerator ConnectWatchdog()
+  {
+    yield return new WaitForSeconds(Mathf.Max(1f, connectTimeoutSeconds));
+    _connectWatchdog = null;   // clear first so StopConnection() doesn't try to stop us
+    if (!IsConnected)
+    {
+      Debug.LogWarning($"[WebRTCController] Connection timed out after {connectTimeoutSeconds}s (server: {serverUrl}).");
+      if (statusText != null) statusText.text = "Connection timed out. Press to retry.";
+      StopConnection();
+      OnConnectionStateChanged?.Invoke(false);
+    }
   }
 
   public void StopConnection()
   {
+    if (_connectWatchdog != null) { StopCoroutine(_connectWatchdog); _connectWatchdog = null; }
     if (cameraChannel != null)
     {
       cameraChannel.Close();
@@ -212,8 +265,26 @@ public class WebRTCController : MonoBehaviour
       pc.Close();
       pc = null;
     }
+    _teleopActive = false;
     statusText.text = "Disconnected.";
     Debug.Log("WebRTC connection closed.");
+  }
+
+  /// <summary>
+  /// Play/Pause gate for teleop. The in-VR Play button calls this with true to begin
+  /// streaming body pose (start teleoping) and false to pause (freeze — connection stays up).
+  /// No-op while disconnected so Play can't stream into a dead channel.
+  /// </summary>
+  public void SetTeleopActive(bool active)
+  {
+    if (active && !IsConnected)
+    {
+      Debug.LogWarning("[WebRTCController] SetTeleopActive(true) ignored — not connected.");
+      _teleopActive = false;
+      return;
+    }
+    _teleopActive = active;
+    Debug.Log($"[WebRTCController] Teleop {(active ? "started" : "paused")}.");
   }
 
   public void ToggleConnection(bool isOn)
@@ -274,6 +345,20 @@ public void ToggleVideoStream(bool isOn)
     }
   }
 
+  /// <summary>
+  /// Send a JSON UI-state report to the study manager over the 'unity_state' data
+  /// channel (Unity → server). Used by <see cref="UnityCommandReceiver"/> to mirror
+  /// in-VR toggle changes back to the manager's button UI. No-op (drops) if the
+  /// channel is not open yet.
+  /// </summary>
+  public void SendUnityState(string json)
+  {
+    if (unityStateChannel != null && unityStateChannel.ReadyState == RTCDataChannelState.Open)
+    {
+      unityStateChannel.Send(System.Text.Encoding.UTF8.GetBytes(json));
+    }
+  }
+
   private void OnAprilTagsDetected(QuestAprilTagTracker.TagResult[] tags)
   {
       if (aprilTagChannel != null && aprilTagChannel.ReadyState == RTCDataChannelState.Open)
@@ -328,6 +413,14 @@ public void ToggleVideoStream(bool isOn)
     aprilTagChannel = pc.CreateDataChannel("apriltag_pose", bodyPoseChannelOptions);
     SetupDataChannelEvents(aprilTagChannel);
 
+    // Reverse UI-state channel (Unity → study manager). Reliable/ordered (default
+    // options) because these are discrete one-shot toggle reports that must not be
+    // dropped — the manager mirrors them onto its button UI. Client-created so the
+    // server picks it up via its 'unity_state' datachannel handler (same pattern as
+    // body_pose / apriltag_pose).
+    unityStateChannel = pc.CreateDataChannel("unity_state");
+    SetupDataChannelEvents(unityStateChannel);
+
     // Create offer
     var offer = pc.CreateOffer();
     yield return offer;
@@ -360,6 +453,8 @@ public void ToggleVideoStream(bool isOn)
       www.uploadHandler = new UploadHandlerRaw(bodyRaw);
       www.downloadHandler = new DownloadHandlerBuffer();
       www.SetRequestHeader("Content-Type", "application/json");
+      // Bounded so an unreachable/wrong server can't hang the offer POST forever.
+      www.timeout = Mathf.Max(1, Mathf.CeilToInt(connectTimeoutSeconds));
 
       yield return www.SendWebRequest();
 
@@ -391,6 +486,19 @@ public void ToggleVideoStream(bool isOn)
         UnityMainThreadDispatcher.Instance().Enqueue(() =>
             {
               statusText.text = "Peers connected!";
+              if (_connectWatchdog != null) { StopCoroutine(_connectWatchdog); _connectWatchdog = null; }
+              OnConnectionStateChanged?.Invoke(true);
+            });
+      }
+      else if (state == RTCPeerConnectionState.Disconnected ||
+               state == RTCPeerConnectionState.Failed ||
+               state == RTCPeerConnectionState.Closed)
+      {
+        // Link lost: pause teleop and notify the UI so the power button auto-resets to "off".
+        _teleopActive = false;
+        UnityMainThreadDispatcher.Instance().Enqueue(() =>
+            {
+              OnConnectionStateChanged?.Invoke(false);
             });
       }
     };
@@ -554,9 +662,10 @@ public void ToggleVideoStream(bool isOn)
         }
       }
 
-      // Only send if there's new data and the network buffer is not congested.
-      // This prevents building up a queue and causing latency.
-      if (dataToSend != null && bodyPoseChannel.BufferedAmount < HIGH_WATER_MARK)
+      // Only send while teleop is ACTIVE (Play). When paused the connection stays up but
+      // no pose is streamed, so the robot holds its last pose (freeze). Also gate on new
+      // data and an uncongested buffer to keep latency low.
+      if (_teleopActive && dataToSend != null && bodyPoseChannel.BufferedAmount < HIGH_WATER_MARK)
       {
         bodyPoseChannel.Send(dataToSend);
       }
