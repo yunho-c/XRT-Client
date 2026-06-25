@@ -10,8 +10,17 @@ using UnityEngine.EventSystems;
 [RequireComponent(typeof(UnityEngine.UI.Graphic))]
 public class HoldRepeatButton : MonoBehaviour, IPointerDownHandler, IPointerUpHandler, IPointerExitHandler
 {
-    [Tooltip("Invoked on press and then repeatedly while held.")]
+    [Tooltip("Invoked once on the initial press (the tap).")]
     public UnityEvent onPress;
+
+    [Tooltip("Invoked on each auto-repeat tick while the button is HELD (after the initial delay) " +
+             "when useOnRepeat is true. Lets a button do a fine step on tap (onPress) and a coarse " +
+             "step on hold (onRepeat).")]
+    public UnityEvent onRepeat;
+
+    [Tooltip("When true, held auto-repeats fire onRepeat instead of onPress. Default false keeps the " +
+             "plain hold-to-repeat behaviour (repeats fire onPress).")]
+    public bool useOnRepeat = false;
 
     [Tooltip("Seconds held before auto-repeat begins.")]
     public float initialDelay = 0.4f;
@@ -25,7 +34,7 @@ public class HoldRepeatButton : MonoBehaviour, IPointerDownHandler, IPointerUpHa
     public void OnPointerDown(PointerEventData e)
     {
         _held = true;
-        Fire();
+        onPress?.Invoke();           // the tap
         _nextFire = Time.unscaledTime + initialDelay;
     }
 
@@ -38,10 +47,12 @@ public class HoldRepeatButton : MonoBehaviour, IPointerDownHandler, IPointerUpHa
     {
         if (_held && Time.unscaledTime >= _nextFire)
         {
-            Fire();
+            // Repeat tick: coarse action when opted in, else the plain onPress repeat.
+            if (useOnRepeat && onRepeat != null)
+                onRepeat.Invoke();
+            else
+                onPress?.Invoke();
             _nextFire = Time.unscaledTime + repeatInterval;
         }
     }
-
-    void Fire() => onPress?.Invoke();
 }

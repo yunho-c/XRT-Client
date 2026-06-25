@@ -40,6 +40,9 @@ public class WebRTCController : MonoBehaviour
   [SerializeField] private TMP_Text statusText;
   [SerializeField] private RenderTexture videoRenderTexture;
   [SerializeField] private Material videoMaterial;
+  // The TELEOP's OWN single-track video display GO (the teleop server currently sends no video,
+  // so this is normally null). It must NOT be the stereo camera viewport (VideoStreamingViewport),
+  // which is owned by MediaMTXReceiver — see ToggleVideoStream for why.
   [SerializeField] private GameObject videoDisplayObject;
   [SerializeField] private TMP_InputField ipAddressInputField;
 
@@ -301,27 +304,19 @@ public class WebRTCController : MonoBehaviour
 
 public void ToggleVideoStream(bool isOn)
   {
-    if (isOn)
+    if (videoTrack != null)
     {
-      if (videoTrack != null)
-      {
-        videoTrack.Enabled = true;
-      }
-      if (videoDisplayObject != null)
-      {
-        videoDisplayObject.SetActive(true);
-      }
+      videoTrack.Enabled = isOn;
     }
-    else
+
+    // NEVER toggle the active state of the stereo camera viewport from here. That GameObject is
+    // owned by MediaMTXReceiver, and deactivating it stops MediaMTXReceiver's WebRTC frame pump
+    // (started in Start, runs once per activation) — which leaves a frozen white overlay on the
+    // FPV display when it's reopened. videoDisplayObject is meant to be the teleop's OWN video
+    // display; guard against a mis-wired reference to the camera viewport just in case.
+    if (videoDisplayObject != null && videoDisplayObject.GetComponent<MediaMTXReceiver>() == null)
     {
-      if (videoTrack != null)
-      {
-        videoTrack.Enabled = false;
-      }
-      if (videoDisplayObject != null)
-      {
-        videoDisplayObject.SetActive(false);
-      }
+      videoDisplayObject.SetActive(isOn);
     }
 
     // Save the video stream visibility setting

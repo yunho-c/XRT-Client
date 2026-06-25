@@ -47,13 +47,15 @@ public class ZEDFOVFiller : MonoBehaviour
              "Typical range: -0.02 to +0.02.")]
     [SerializeField] private float ipdShift = 0f;
 
-    [Tooltip("IPD shift change per +/- button press (Align Video panel). Hold-to-repeat fires ~10/s, " +
-             "so this sets the sweep speed; tap for fine tuning.")]
-    public float ipdStep = 0.01f;
-    [Tooltip("Max absolute IPD shift (clamp). Kept small (typical tuning is ±0.02) so the " +
-             "hold-to-repeat button can't run the convergence far enough to break stereo fusion. " +
-             "A saved value beyond this is treated as a runaway and reset to 0 on load.")]
-    public float maxIPD = 0.05f;
+    [Tooltip("Fine IPD step — applied on a single TAP of the Align Video +/- buttons, for precise " +
+             "tuning (~0.001).")]
+    public float ipdStepFine = 0.001f;
+    [Tooltip("Coarse IPD step — applied on each auto-repeat tick while the +/- button is HELD " +
+             "(~10/s), for a quick sweep across the range.")]
+    public float ipdStepCoarse = 0.01f;
+    [Tooltip("Max IPD shift (clamp). The usable range is [0, maxIPD]. A saved value outside the " +
+             "range is clamped back into it on load.")]
+    public float maxIPD = 0.25f;
 
     [Header("User Reposition (Align Video panel; saved to PlayerPrefs)")]
     [Tooltip("Zoom factor for the feed. >1 magnifies (zoom in). Applied to both eyes equally.")]
@@ -64,10 +66,14 @@ public class ZEDFOVFiller : MonoBehaviour
     [SerializeField] private float userOffsetY = 0f;
 
     [Header("Reposition Steps / Limits")]
-    [Tooltip("Zoom change per arrow press.")]
+    [Tooltip("Zoom change per HELD auto-repeat tick (coarse / quick sweep).")]
     public float zoomStep = 0.03f;
-    [Tooltip("Pan change per arrow press, in UV units.")]
+    [Tooltip("Zoom change per single TAP (fine precision).")]
+    public float zoomStepFine = 0.005f;
+    [Tooltip("Pan change per HELD auto-repeat tick (coarse / quick), in UV units.")]
     public float panStep = 0.005f;
+    [Tooltip("Pan change per single TAP (fine precision), in UV units.")]
+    public float panStepFine = 0.001f;
     public float minZoom = 0.4f;
     public float maxZoom = 3f;
     [Tooltip("Max absolute pan offset in UV units.")]
@@ -88,8 +94,14 @@ public class ZEDFOVFiller : MonoBehaviour
     [SerializeField] private float canvasDepth = 1f;
 
     [Header("Canvas Steps / Limits")]
+    [Tooltip("Stretch change per HELD auto-repeat tick (coarse / quick).")]
     public float stretchStep = 0.03f;
+    [Tooltip("Stretch change per single TAP (fine precision).")]
+    public float stretchStepFine = 0.005f;
+    [Tooltip("Size change per HELD auto-repeat tick (coarse / quick).")]
     public float depthStep = 0.03f;
+    [Tooltip("Size change per single TAP (fine precision).")]
+    public float depthStepFine = 0.005f;
     public float minCanvasScale = 0.3f;
     public float maxCanvasScale = 3f;
 
@@ -167,42 +179,59 @@ public class ZEDFOVFiller : MonoBehaviour
     public float UserOffsetY => userOffsetY;
     public float IPDShift => ipdShift;
 
-    /// <summary>Adjust the per-eye IPD/convergence shift. dir = +1 / -1. Helps the magnified stereo
-    /// fuse (reduces the double-vision "blur" when zoomed in).</summary>
-    public void NudgeIPD(float dir)
+    /// <summary>Adjust the per-eye IPD/convergence shift by dir(±1) * step, clamped to [0, maxIPD].
+    /// Helps the magnified stereo fuse (reduces the double-vision "blur" when zoomed in).</summary>
+    public void NudgeIPD(float dir, float step)
     {
-        ipdShift = Mathf.Clamp(ipdShift + dir * ipdStep, -maxIPD, maxIPD);
+        ipdShift = Mathf.Clamp(ipdShift + dir * step, 0f, maxIPD);
     }
 
-    public void IPDUp()   => NudgeIPD(+1f);
-    public void IPDDown() => NudgeIPD(-1f);
+    // Tap = fine precision; hold (auto-repeat) = quick coarse sweep. Wired in VideoRepositionPanel.
+    public void IPDUpFine()     => NudgeIPD(+1f, ipdStepFine);
+    public void IPDDownFine()   => NudgeIPD(-1f, ipdStepFine);
+    public void IPDUpCoarse()   => NudgeIPD(+1f, ipdStepCoarse);
+    public void IPDDownCoarse() => NudgeIPD(-1f, ipdStepCoarse);
 
-    /// <summary>Zoom in/out. dir = +1 zooms in, -1 zooms out.</summary>
-    public void NudgeZoom(float dir)
+    // Back-compat single-press aliases (fine).
+    public void IPDUp()   => IPDUpFine();
+    public void IPDDown() => IPDDownFine();
+
+    /// <summary>Zoom in/out by dir(±1) * step.</summary>
+    public void NudgeZoom(float dir, float step)
     {
-        userZoom = Mathf.Clamp(userZoom + dir * zoomStep, minZoom, maxZoom);
+        userZoom = Mathf.Clamp(userZoom + dir * step, minZoom, maxZoom);
     }
+    public void NudgeZoom(float dir) => NudgeZoom(dir, zoomStep);   // coarse default
 
-    /// <summary>Pan horizontally. dir = +1 moves the feed left, -1 moves it right.</summary>
-    public void NudgePanX(float dir)
+    /// <summary>Pan horizontally by dir(±1) * step. dir = +1 moves the feed left.</summary>
+    public void NudgePanX(float dir, float step)
     {
-        userOffsetX = Mathf.Clamp(userOffsetX + dir * panStep, -maxOffset, maxOffset);
+        userOffsetX = Mathf.Clamp(userOffsetX + dir * step, -maxOffset, maxOffset);
     }
+    public void NudgePanX(float dir) => NudgePanX(dir, panStep);
 
-    /// <summary>Pan vertically. dir = +1 moves the feed down, -1 moves it up.</summary>
-    public void NudgePanY(float dir)
+    /// <summary>Pan vertically by dir(±1) * step. dir = +1 moves the feed down.</summary>
+    public void NudgePanY(float dir, float step)
     {
-        userOffsetY = Mathf.Clamp(userOffsetY + dir * panStep, -maxOffset, maxOffset);
+        userOffsetY = Mathf.Clamp(userOffsetY + dir * step, -maxOffset, maxOffset);
     }
+    public void NudgePanY(float dir) => NudgePanY(dir, panStep);
 
-    // Convenience methods for direct UI button wiring.
-    // Arrows now PAN (up/down/left/right); the +/- buttons ZOOM.
+    // Convenience methods for direct UI button wiring. The plain names use the COARSE (hold) step;
+    // the *Fine variants use the fine (tap) step. Arrows PAN (up/down/left/right); +/- ZOOM.
     public void ZoomIn()  => NudgeZoom(+1f);
     public void ZoomOut() => NudgeZoom(-1f);
     public void PanLeft()  => NudgePanX(+1f);
     public void PanRight() => NudgePanX(-1f);
     public void PanUp()    => NudgePanY(-1f);
     public void PanDown()  => NudgePanY(+1f);
+
+    public void ZoomInFine()   => NudgeZoom(+1f, zoomStepFine);
+    public void ZoomOutFine()  => NudgeZoom(-1f, zoomStepFine);
+    public void PanLeftFine()  => NudgePanX(+1f, panStepFine);
+    public void PanRightFine() => NudgePanX(-1f, panStepFine);
+    public void PanUpFine()    => NudgePanY(-1f, panStepFine);
+    public void PanDownFine()  => NudgePanY(+1f, panStepFine);
 
     /// <summary>Persist the current zoom/pan so it survives app restarts (and Quest builds).</summary>
     public void SaveReposition()
@@ -232,14 +261,14 @@ public class ZEDFOVFiller : MonoBehaviour
         userOffsetY     = PlayerPrefs.GetFloat(PP_OFFY, userOffsetY);
         zoomConvergence = PlayerPrefs.GetFloat(PP_CONV, zoomConvergence);
         ipdShift        = PlayerPrefs.GetFloat(PP_IPD,  ipdShift);
-        // Self-heal a runaway / legacy saved IPD (e.g. one driven far past the usable range
-        // by the hold-to-repeat button) so the stereo feed fuses correctly from launch with
-        // NO manual reset. Anything beyond the clamp is discarded back to 0 and the stored
-        // value is corrected once so it stays fixed on subsequent launches.
-        if (Mathf.Abs(ipdShift) > maxIPD)
+        // Keep a correctly-saved value, but clamp anything outside the usable [0, maxIPD] range
+        // back into it (heals a legacy negative or a runaway saved value) and correct the stored
+        // value once so it stays fixed on subsequent launches — no manual reset needed.
+        float clampedIpd = Mathf.Clamp(ipdShift, 0f, maxIPD);
+        if (!Mathf.Approximately(clampedIpd, ipdShift))
         {
-            ipdShift = 0f;
-            PlayerPrefs.SetFloat(PP_IPD, 0f);
+            ipdShift = clampedIpd;
+            PlayerPrefs.SetFloat(PP_IPD, ipdShift);
             PlayerPrefs.Save();
         }
         canvasScaleX    = PlayerPrefs.GetFloat(PP_CSX,  canvasScaleX);
@@ -254,16 +283,27 @@ public class ZEDFOVFiller : MonoBehaviour
     public float CanvasScaleY => canvasScaleY;
     public float CanvasDepth  => canvasDepth;
 
-    public void NudgeStretchX(float dir) => canvasScaleX = Mathf.Clamp(canvasScaleX + dir * stretchStep, minCanvasScale, maxCanvasScale);
-    public void NudgeStretchY(float dir) => canvasScaleY = Mathf.Clamp(canvasScaleY + dir * stretchStep, minCanvasScale, maxCanvasScale);
-    public void NudgeDepth(float dir)    => canvasDepth  = Mathf.Clamp(canvasDepth  + dir * depthStep,   minCanvasScale, maxCanvasScale);
+    public void NudgeStretchX(float dir, float step) => canvasScaleX = Mathf.Clamp(canvasScaleX + dir * step, minCanvasScale, maxCanvasScale);
+    public void NudgeStretchX(float dir) => NudgeStretchX(dir, stretchStep);
+    public void NudgeStretchY(float dir, float step) => canvasScaleY = Mathf.Clamp(canvasScaleY + dir * step, minCanvasScale, maxCanvasScale);
+    public void NudgeStretchY(float dir) => NudgeStretchY(dir, stretchStep);
+    public void NudgeDepth(float dir, float step)    => canvasDepth  = Mathf.Clamp(canvasDepth  + dir * step,   minCanvasScale, maxCanvasScale);
+    public void NudgeDepth(float dir)    => NudgeDepth(dir, depthStep);
 
+    // Plain names = COARSE (hold) step; *Fine variants = fine (tap) step.
     public void StretchWider()    => NudgeStretchX(+1f);
     public void StretchNarrower() => NudgeStretchX(-1f);
     public void StretchTaller()   => NudgeStretchY(+1f);
     public void StretchShorter()  => NudgeStretchY(-1f);
     public void CanvasCloser()    => NudgeDepth(+1f);   // bigger window
     public void CanvasFurther()   => NudgeDepth(-1f);   // smaller window
+
+    public void StretchWiderFine()    => NudgeStretchX(+1f, stretchStepFine);
+    public void StretchNarrowerFine() => NudgeStretchX(-1f, stretchStepFine);
+    public void StretchTallerFine()   => NudgeStretchY(+1f, stretchStepFine);
+    public void StretchShorterFine()  => NudgeStretchY(-1f, stretchStepFine);
+    public void CanvasCloserFine()    => NudgeDepth(+1f, depthStepFine);
+    public void CanvasFurtherFine()   => NudgeDepth(-1f, depthStepFine);
 
     /// <summary>Persist the display-window shape.</summary>
     public void SaveCanvas()

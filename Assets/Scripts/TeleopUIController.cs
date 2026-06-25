@@ -58,6 +58,18 @@ public class TeleopUIController : MonoBehaviour
         if (playPauseToggle != null) playPauseToggle.onValueChanged.RemoveListener(OnPlayPauseToggled);
     }
 
+    void Update()
+    {
+        // Keep the Play/Pause button continuously in sync with the ACTUAL teleop-active state,
+        // so it always reflects a remote change — e.g. the study manager's green Start Teleop
+        // button resuming teleop — even if the one-shot refresh for that event was missed or
+        // raced. The icon (and toggle) follow WebRTCController.IsTeleopActive every frame.
+        bool playing = webRTCController != null && webRTCController.IsTeleopActive;
+        if (playPauseToggle != null && playPauseToggle.isOn != playing)
+            playPauseToggle.SetIsOnWithoutNotify(playing);
+        RefreshVisuals();
+    }
+
     // ── Power button: connect / disconnect only (never teleops) ─────────────────
     void OnPowerToggled(bool on)
     {

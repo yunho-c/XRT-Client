@@ -2480,13 +2480,16 @@ MonoBehaviour:
   fillMode: 0
   flipY: 0
   ipdShift: 0
-  ipdStep: 0.01
-  maxIPD: 0.05
+  ipdStepFine: 0.001
+  ipdStepCoarse: 0.01
+  maxIPD: 0.25
   userZoom: 1
   userOffsetX: 0
   userOffsetY: 0
   zoomStep: 0.03
+  zoomStepFine: 0.005
   panStep: 0.005
+  panStepFine: 0.001
   minZoom: 0.4
   maxZoom: 3
   maxOffset: 0.5
@@ -2495,7 +2498,9 @@ MonoBehaviour:
   canvasScaleY: 1
   canvasDepth: 1
   stretchStep: 0.03
+  stretchStepFine: 0.005
   depthStep: 0.03
+  depthStepFine: 0.005
   minCanvasScale: 0.3
   maxCanvasScale: 3
 --- !u!1 &255424862
@@ -17260,7 +17265,7 @@ MonoBehaviour:
   statusText: {fileID: 8974579522585799811}
   videoRenderTexture: {fileID: 8400000, guid: c8114d2dae2a84b3fad9412f0c6a9413, type: 2}
   videoMaterial: {fileID: 2100000, guid: 5e1d5e7379e114ad49a9cd559f359d8d, type: 2}
-  videoDisplayObject: {fileID: 255038644}
+  videoDisplayObject: {fileID: 0}
   ipAddressInputField: {fileID: 1350388489}
   autoStartConnection: 0
   connectTimeoutSeconds: 12

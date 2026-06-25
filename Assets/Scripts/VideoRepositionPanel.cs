@@ -74,20 +74,30 @@ public class VideoRepositionPanel : MonoBehaviour
 
         NewLabel("Title", root, feed ? "Align Video" : "Resize Display", 16f, new Vector2(0f, 148f), new Vector2(220f, 28f));
 
-        // Arrow cross. Feed = pan; Canvas = stretch.
+        // Arrow cross. Feed = pan; Canvas = stretch. Tap = fine step; hold = quick coarse sweep.
         var arrow = BuildTriangleSprite(96);
-        MakeArrow("Up",    new Vector2(0f,  104f),   0f, arrow, feed ? Act(() => fovFiller?.PanUp())        : Act(() => fovFiller?.StretchTaller()));
-        MakeArrow("Down",  new Vector2(0f,  -12f), 180f, arrow, feed ? Act(() => fovFiller?.PanDown())      : Act(() => fovFiller?.StretchShorter()));
-        MakeArrow("Left",  new Vector2(-74f, 46f),  90f, arrow, feed ? Act(() => fovFiller?.PanLeft())      : Act(() => fovFiller?.StretchNarrower()));
-        MakeArrow("Right", new Vector2(74f,  46f), -90f, arrow, feed ? Act(() => fovFiller?.PanRight())     : Act(() => fovFiller?.StretchWider()));
+        MakeArrow("Up",    new Vector2(0f,  104f),   0f, arrow,
+            feed ? Act(() => fovFiller?.PanUpFine())       : Act(() => fovFiller?.StretchTallerFine()),
+            feed ? Act(() => fovFiller?.PanUp())           : Act(() => fovFiller?.StretchTaller()));
+        MakeArrow("Down",  new Vector2(0f,  -12f), 180f, arrow,
+            feed ? Act(() => fovFiller?.PanDownFine())     : Act(() => fovFiller?.StretchShorterFine()),
+            feed ? Act(() => fovFiller?.PanDown())         : Act(() => fovFiller?.StretchShorter()));
+        MakeArrow("Left",  new Vector2(-74f, 46f),  90f, arrow,
+            feed ? Act(() => fovFiller?.PanLeftFine())     : Act(() => fovFiller?.StretchNarrowerFine()),
+            feed ? Act(() => fovFiller?.PanLeft())         : Act(() => fovFiller?.StretchNarrower()));
+        MakeArrow("Right", new Vector2(74f,  46f), -90f, arrow,
+            feed ? Act(() => fovFiller?.PanRightFine())    : Act(() => fovFiller?.StretchWiderFine()),
+            feed ? Act(() => fovFiller?.PanRight())        : Act(() => fovFiller?.StretchWider()));
 
         _readout = NewLabel("Readout", root, "", 12f, new Vector2(0f, 46f), new Vector2(120f, 70f));
 
-        // +/- buttons. Feed = zoom; Canvas = closer/further. Hold-to-repeat.
-        MakeButton("Minus", "-", zoomColor, new Vector2(-46f, -66f), new Vector2(56f, 44f), true,
-            feed ? Act(() => fovFiller?.ZoomOut()) : Act(() => fovFiller?.CanvasFurther()));
-        MakeButton("Plus",  "+", zoomColor, new Vector2(46f,  -66f), new Vector2(56f, 44f), true,
-            feed ? Act(() => fovFiller?.ZoomIn())  : Act(() => fovFiller?.CanvasCloser()));
+        // +/- buttons. Feed = zoom; Canvas = closer/further. Tap = fine; hold = quick coarse sweep.
+        MakeFineCoarseButton("Minus", "-", zoomColor, new Vector2(-46f, -66f), new Vector2(56f, 44f),
+            feed ? Act(() => fovFiller?.ZoomOutFine()) : Act(() => fovFiller?.CanvasFurtherFine()),
+            feed ? Act(() => fovFiller?.ZoomOut())     : Act(() => fovFiller?.CanvasFurther()));
+        MakeFineCoarseButton("Plus",  "+", zoomColor, new Vector2(46f,  -66f), new Vector2(56f, 44f),
+            feed ? Act(() => fovFiller?.ZoomInFine())  : Act(() => fovFiller?.CanvasCloserFine()),
+            feed ? Act(() => fovFiller?.ZoomIn())      : Act(() => fovFiller?.CanvasCloser()));
 
         // Save / Reset (single press).
         MakeButton("Save",  "Save",  saveColor,  new Vector2(-54f, -126f), new Vector2(92f, 40f), false,
@@ -100,10 +110,11 @@ public class VideoRepositionPanel : MonoBehaviour
         if (feed)
         {
             NewLabel("IPDLabel", root, "IPD", 11f, new Vector2(96f, 6f), new Vector2(40f, 16f));
-            MakeButton("IPDPlus",  "+", ipdColor, new Vector2(96f, -22f), new Vector2(38f, 40f), true,
-                Act(() => fovFiller?.IPDUp()));
-            MakeButton("IPDMinus", "-", ipdColor, new Vector2(96f, -64f), new Vector2(38f, 40f), true,
-                Act(() => fovFiller?.IPDDown()));
+            // Tap = fine (~0.001) precision; hold = quick coarse sweep across [0, 0.25].
+            MakeFineCoarseButton("IPDPlus",  "+", ipdColor, new Vector2(96f, -22f), new Vector2(38f, 40f),
+                Act(() => fovFiller?.IPDUpFine()),   Act(() => fovFiller?.IPDUpCoarse()));
+            MakeFineCoarseButton("IPDMinus", "-", ipdColor, new Vector2(96f, -64f), new Vector2(38f, 40f),
+                Act(() => fovFiller?.IPDDownFine()), Act(() => fovFiller?.IPDDownCoarse()));
         }
     }
 
@@ -111,7 +122,9 @@ public class VideoRepositionPanel : MonoBehaviour
 
     // ── builders ────────────────────────────────────────────────────────────────
 
-    void MakeArrow(string name, Vector2 pos, float zRot, Sprite arrow, UnityEngine.Events.UnityAction action)
+    // Arrow button with DISTINCT tap vs hold actions: tap = fine step, hold = coarse/quick sweep.
+    void MakeArrow(string name, Vector2 pos, float zRot, Sprite arrow,
+                   UnityEngine.Events.UnityAction tapAction, UnityEngine.Events.UnityAction holdAction)
     {
         var btnImg = NewImage(name, (RectTransform)transform, buttonColor, true);
         var rt = (RectTransform)btnImg.transform;
@@ -132,7 +145,10 @@ public class VideoRepositionPanel : MonoBehaviour
 
         var hold = btnImg.gameObject.AddComponent<HoldRepeatButton>();
         hold.onPress = new UnityEngine.Events.UnityEvent();
-        hold.onPress.AddListener(action);
+        hold.onPress.AddListener(tapAction);
+        hold.onRepeat = new UnityEngine.Events.UnityEvent();
+        hold.onRepeat.AddListener(holdAction);
+        hold.useOnRepeat = true;
     }
 
     void MakeButton(string name, string label, Color color, Vector2 pos, Vector2 size, bool repeat, UnityEngine.Events.UnityAction action)
@@ -155,6 +171,30 @@ public class VideoRepositionPanel : MonoBehaviour
         {
             btn.onClick.AddListener(action);
         }
+
+        Stretch((RectTransform)NewLabel(label + "Label", rt, label, 18f, Vector2.zero, size).transform);
+    }
+
+    // Hold-to-repeat button with DISTINCT tap vs hold actions: a single tap fires tapAction
+    // (fine step), while holding auto-repeats holdAction (coarse/quick step).
+    void MakeFineCoarseButton(string name, string label, Color color, Vector2 pos, Vector2 size,
+                              UnityEngine.Events.UnityAction tapAction, UnityEngine.Events.UnityAction holdAction)
+    {
+        var img = NewImage(name, (RectTransform)transform, color, true);
+        var rt = (RectTransform)img.transform;
+        rt.sizeDelta = size;
+        rt.anchoredPosition = pos;
+
+        var btn = img.gameObject.AddComponent<Button>();
+        btn.transition = Selectable.Transition.ColorTint;
+        btn.targetGraphic = img;
+
+        var hold = img.gameObject.AddComponent<HoldRepeatButton>();
+        hold.onPress = new UnityEngine.Events.UnityEvent();
+        hold.onPress.AddListener(tapAction);
+        hold.onRepeat = new UnityEngine.Events.UnityEvent();
+        hold.onRepeat.AddListener(holdAction);
+        hold.useOnRepeat = true;
 
         Stretch((RectTransform)NewLabel(label + "Label", rt, label, 18f, Vector2.zero, size).transform);
     }

@@ -237,24 +237,22 @@ public class UnityCommandReceiver : MonoBehaviour
             Debug.LogWarning("[UnityCommandReceiver] No stereoReceiver assigned; ignoring SetStreamingConnection.");
             return;
         }
-        // Idempotent: only act if Unity isn't already in the requested state. Critical for the
-        // manager's connect-time push — Unity auto-starts the stream on launch, so blindly
-        // calling StartStream() here would re-offer an already-connected peer (breaks it →
-        // "press to retry"), and blindly calling CancelConnection() would tear down a live feed.
-        if (stereoReceiver.IsStreamingActive == connect)
-        {
-            if (connect && streamingDisplayToggle != null) streamingDisplayToggle.SetIsOnWithoutNotify(true);
-            return;
-        }
+        // The manager's Streaming Feed button OPENS (on) / CLOSES (off) the video feed in the XR
+        // app. The DISPLAY is updated unconditionally so the headset always follows the manager;
+        // the CONNECTION is idempotent so the manager's connect-time push doesn't re-offer an
+        // already-connected peer (which would break it → "press to retry") or tear down a live feed.
         if (connect)
         {
-            stereoReceiver.ToggleVideoStream(true);
+            stereoReceiver.ToggleVideoStream(true);                                  // open the display
             if (streamingDisplayToggle != null) streamingDisplayToggle.SetIsOnWithoutNotify(true);
-            stereoReceiver.StartStream();
+            if (!stereoReceiver.IsStreamingActive) stereoReceiver.StartStream();     // connect if needed
         }
         else
         {
-            stereoReceiver.CancelConnection("Disconnected by study manager.");
+            if (stereoReceiver.IsStreamingActive)                                    // disconnect if active
+                stereoReceiver.CancelConnection("Disconnected by study manager.");
+            stereoReceiver.ToggleVideoStream(false);                                 // close the display
+            if (streamingDisplayToggle != null) streamingDisplayToggle.SetIsOnWithoutNotify(false);
         }
     }
 

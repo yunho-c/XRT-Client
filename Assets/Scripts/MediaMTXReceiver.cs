@@ -373,34 +373,33 @@ public class MediaMTXReceiver : MonoBehaviour
     {
         videoStreamVisible = isOn;
 
-        if (_videoTrackLeft != null)
+        // Activate the viewport GameObject the FIRST time it's shown (it starts inactive), but
+        // NEVER deactivate it on hide. Keeping it active keeps the WebRTC frame pump (started in
+        // Start, which runs only once per activation) AND the connection alive across a hide/show,
+        // so reopening shows LIVE video instead of a frozen white frame. Hiding is done purely by
+        // disabling the MeshRenderer (passthrough) in UpdateDisplayVisibility; the decoder tracks
+        // stay enabled so the texture stays live for an instant re-show.
+        if (isOn && stereoDisplayObject != null && !stereoDisplayObject.activeSelf)
         {
-            _videoTrackLeft.Enabled = isOn;
-        }
-        if (_videoTrackRight != null)
-        {
-            _videoTrackRight.Enabled = isOn;
+            stereoDisplayObject.SetActive(true);
         }
 
-        if (stereoDisplayObject != null)
-        {
-            stereoDisplayObject.SetActive(isOn);
-        }
+        UpdateDisplayVisibility();
 
         PlayerPrefs.SetInt("stereoStreamVisible", isOn ? 1 : 0);
         PlayerPrefs.Save();
     }
 
-    // Show the display only when BOTH eyes have a live decoder texture; otherwise disable
-    // the MeshRenderer so the transparent-clearing camera reveals passthrough (instead of a
-    // white overlay from a blank/released RenderTexture, or an opaque black void). Once a
-    // texture is bound here it keeps updating in place as WebRTC pumps new frames, so no
-    // per-frame re-binding is needed.
+    // Show the display only when it's meant to be visible AND both eyes have a live decoder
+    // texture; otherwise disable the MeshRenderer so the transparent-clearing camera reveals
+    // passthrough (instead of a white overlay from a blank/released RenderTexture, an opaque
+    // black void, or a frozen frame). Once a texture is bound it keeps updating in place as
+    // WebRTC pumps new frames, so no per-frame re-binding is needed.
     private void UpdateDisplayVisibility()
     {
         if (_meshRenderer != null)
         {
-            _meshRenderer.enabled = (_matTexLeft != null && _matTexRight != null);
+            _meshRenderer.enabled = videoStreamVisible && _matTexLeft != null && _matTexRight != null;
         }
     }
 
