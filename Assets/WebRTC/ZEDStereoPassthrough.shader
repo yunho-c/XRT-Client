@@ -33,6 +33,11 @@ Shader "Custom/ZEDStereoPassthrough"
         _UserOffsetX ("User Offset X", Float) = 0.0   // pans feed horizontally
         _UserOffsetY ("User Offset Y", Float) = 0.0   // pans feed vertically
 
+        // Single side-by-side (SBS) source: when 1, BOTH eyes read from _Left, which holds the
+        // stitched [left | right] stereo frame. Left eye samples the left half, right eye the right
+        // half — one decoder, perfect L/R sync. 0 = classic dual-texture (_Left + _Right) path.
+        _SBS ("Single SBS Texture", Float) = 0.0
+
         // Zoom convergence (IPD comfort): extra per-eye convergence that scales with the zoom,
         // pulling the two eye images together as you zoom in so disparity doesn't blow up into
         // double vision. Tune to the operator. 0 = no compensation.
@@ -43,6 +48,14 @@ Shader "Custom/ZEDStereoPassthrough"
         _CanvasScaleX ("Canvas Scale X (stretch)", Float) = 1.0
         _CanvasScaleY ("Canvas Scale Y (stretch)", Float) = 1.0
         _CanvasDepth  ("Canvas Depth (uniform)",   Float) = 1.0   // >1 bigger/closer, <1 smaller/further
+
+        // Edge-softening blur: blurs ONLY the stretched periphery so the harsh magnified edge pixels
+        // are gentle (helps operators with photosensitivity). The central content stays perfectly
+        // sharp — _BlurEdgeStart is where the blur begins (0 = screen centre, 1 = screen edge), so the
+        // inner [0, _BlurEdgeStart] of the view is untouched.
+        _BlurEdgeStart ("Blur Edge Start (0=center..1=edge)", Range(0,1)) = 0.78
+        _BlurStrength  ("Blur Strength (0..1)",               Range(0,1)) = 1.0
+        _BlurRadius    ("Blur Radius (uv)",                   Float)      = 0.008
     }
 
     SubShader
@@ -98,11 +111,38 @@ Shader "Custom/ZEDStereoPassthrough"
                 float  _UserZoom;
                 float  _UserOffsetX;
                 float  _UserOffsetY;
+                float  _SBS;
                 float  _ZoomConvergence;
                 float  _CanvasScaleX;
                 float  _CanvasScaleY;
                 float  _CanvasDepth;
+                float  _BlurEdgeStart;
+                float  _BlurStrength;
+                float  _BlurRadius;
             CBUFFER_END
+
+            // Edge blur: an 8-tap ring blended in by `weight` (0 = sharp center sample). Taps are
+            // clamped to [lo,hi] so an SBS half NEVER bleeds across the L|R (or top/bottom) seam into
+            // the other eye's image. `weight` is 0 across the inner screen, so center pixels take the
+            // cheap single-sample path (the branch is spatially coherent → mobile-friendly).
+            half4 SampleEdgeBlurred(TEXTURE2D_PARAM(tex, smp), float2 uv, float2 lo, float2 hi, float weight)
+            {
+                half4 c = SAMPLE_TEXTURE2D(tex, smp, clamp(uv, lo, hi));
+                if (weight <= 0.001) return c;
+                float r = _BlurRadius;
+                float d = r * 0.70710678;   // diagonal taps at ~45°
+                half4 b = c;
+                b += SAMPLE_TEXTURE2D(tex, smp, clamp(uv + float2( r,  0.0), lo, hi));
+                b += SAMPLE_TEXTURE2D(tex, smp, clamp(uv + float2(-r,  0.0), lo, hi));
+                b += SAMPLE_TEXTURE2D(tex, smp, clamp(uv + float2( 0.0,  r), lo, hi));
+                b += SAMPLE_TEXTURE2D(tex, smp, clamp(uv + float2( 0.0, -r), lo, hi));
+                b += SAMPLE_TEXTURE2D(tex, smp, clamp(uv + float2( d,  d), lo, hi));
+                b += SAMPLE_TEXTURE2D(tex, smp, clamp(uv + float2(-d,  d), lo, hi));
+                b += SAMPLE_TEXTURE2D(tex, smp, clamp(uv + float2( d, -d), lo, hi));
+                b += SAMPLE_TEXTURE2D(tex, smp, clamp(uv + float2(-d, -d), lo, hi));
+                b *= (1.0 / 9.0);
+                return lerp(c, b, weight);
+            }
 
             Varyings Vert(Attributes IN)
             {
@@ -147,11 +187,48 @@ Shader "Custom/ZEDStereoPassthrough"
 
                 uv = saturate(uv);
 
-                half4 L = SAMPLE_TEXTURE2D(_Left,  sampler_Left,  uv);
-                half4 R = SAMPLE_TEXTURE2D(_Right, sampler_Right, uv);
+                // Single stitched stereo stream: the two eye images are the two halves of _Left. Sample
+                // both at the SAME transformed uv and select per eye with the IDENTICAL lerp the dual
+                // path uses below — so the final render (FOV, zoom, pan, IPD, canvas, eye mapping) is
+                // the same as dual; only the texture source differs. _SBS picks the split:
+                //   1 = horizontal [left|right]   2 = horizontal swapped
+                //   3 = vertical [top/bottom]     4 = vertical swapped
+                // (orientation is auto-detected from the frame shape; swap = sbsSwapEyes; _FlipY for
+                // upside-down). By the /zed_stereo stitch convention the FIRST half (left/top) is the
+                // ZED-LEFT camera -> headset LEFT eye, matching dual's net mapping.
+                // Edge-softening weight: 0 across the inner view, ramping up only near the screen
+                // edges, so ONLY the harsh stretched periphery is blurred and the real content stays
+                // sharp. Based on the screen-space quad uv (IN.uv), independent of the FOV/zoom remap.
+                float2 edgeXY = abs(IN.uv - 0.5) * 2.0;     // 0 at center -> 1 at each screen edge
+                float edgeWeight = smoothstep(_BlurEdgeStart, 1.0, max(edgeXY.x, edgeXY.y)) * _BlurStrength;
 
-                // ZED camera orientation is mirrored vs headset eye layout, so swap L/R.
-                return lerp(R, L, (half)unity_StereoEyeIndex);
+                if (_SBS > 0.5)
+                {
+                    bool sbsHoriz = (_SBS < 2.5);
+                    bool sbsSwap  = (_SBS == 2.0 || _SBS == 4.0);
+                    float2 uvFirst  = sbsHoriz ? float2(uv.x * 0.5,       uv.y)
+                                               : float2(uv.x, uv.y * 0.5 + 0.5);   // left / top
+                    float2 uvSecond = sbsHoriz ? float2(uv.x * 0.5 + 0.5, uv.y)
+                                               : float2(uv.x, uv.y * 0.5);          // right / bottom
+                    // Sub-rect bounds for each half, so blur taps never bleed across the seam into the other eye.
+                    float2 loFirst  = sbsHoriz ? float2(0.0, 0.0) : float2(0.0, 0.5);
+                    float2 hiFirst  = sbsHoriz ? float2(0.5, 1.0) : float2(1.0, 1.0);
+                    float2 loSecond = sbsHoriz ? float2(0.5, 0.0) : float2(0.0, 0.0);
+                    float2 hiSecond = sbsHoriz ? float2(1.0, 1.0) : float2(1.0, 0.5);
+                    // headset-left eye (index 0) -> first half (ZED-left), unless swapped — IDENTICAL
+                    // mapping to the dual lerp below (lerp(zedLeft,zedRight,eyeIndex) picked exactly one).
+                    bool useFirst = ((unity_StereoEyeIndex == 0) != sbsSwap);
+                    float2 sUv = useFirst ? uvFirst : uvSecond;
+                    float2 sLo = useFirst ? loFirst : loSecond;
+                    float2 sHi = useFirst ? hiFirst : hiSecond;
+                    return SampleEdgeBlurred(TEXTURE2D_ARGS(_Left, sampler_Left), sUv, sLo, sHi, edgeWeight);
+                }
+
+                // Dual: ZED camera orientation is mirrored vs headset eye layout, so eye 0 -> _Right,
+                // eye 1 -> _Left (identical to the old lerp(R, L, eyeIndex)).
+                if (unity_StereoEyeIndex == 0)
+                    return SampleEdgeBlurred(TEXTURE2D_ARGS(_Right, sampler_Right), uv, float2(0.0, 0.0), float2(1.0, 1.0), edgeWeight);
+                return SampleEdgeBlurred(TEXTURE2D_ARGS(_Left, sampler_Left), uv, float2(0.0, 0.0), float2(1.0, 1.0), edgeWeight);
             }
             ENDHLSL
         }

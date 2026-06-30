@@ -63,6 +63,14 @@ public class WebRTCController : MonoBehaviour
   private RTCDataChannel bodyPoseChannel;
   private RTCDataChannel aprilTagChannel;
   private RTCDataChannel unityStateChannel;
+  // Manager→XR control channels. CLIENT-created (opened by the Quest in the offer) because
+  // aiortc-as-answerer-created channels don't reliably surface on Unity's libwebrtc-as-offerer,
+  // whereas offerer(Quest)-created channels do — the same proven path as body_pose / unity_state.
+  // The study manager keeps SENDING on them via its existing send_to_datachannel calls (the server
+  // stores client-created channels in the same per-peer channel map).
+  private RTCDataChannel hapticsChannel;
+  private RTCDataChannel unityCmdsChannel;
+  private RTCDataChannel motorStatsChannel;
   private VideoStreamTrack videoTrack;
   private Coroutine _sendBodyPoseCoroutine;
   private Coroutine _connectWatchdog;
@@ -71,6 +79,13 @@ public class WebRTCController : MonoBehaviour
   // Body pose is only streamed to the server while _teleopActive is true (driven by the
   // in-VR Play/Pause button via SetTeleopActive). Connecting alone does NOT teleop.
   private bool _teleopActive = false;
+
+  // Neck gate: while the camera streaming feed is active (but BEFORE teleop starts) we still
+  // stream body pose so the study manager can drive the robot's Ostrich neck from the head
+  // bone — letting the operator look around with the live feed before pressing Play. The
+  // manager only runs full-body IK while teleop is active, so a paused/idle robot still tracks
+  // the head. Set by UnityCommandReceiver from the stereo stream's connection state.
+  private bool _neckActive = false;
 
   /// <summary>Fired (on the main thread) when the peer connection becomes Connected (true)
   /// or drops to Disconnected/Failed/Closed (false). The UI uses this to highlight the power
@@ -83,6 +98,45 @@ public class WebRTCController : MonoBehaviour
 
   /// <summary>True while teleop is actively streaming body pose (Play, not Pause).</summary>
   public bool IsTeleopActive => _teleopActive;
+
+  /// <summary>
+  /// Enable/disable streaming body pose for neck (head) tracking while the camera feed is up
+  /// but teleop has not started. Lets the operator look around before pressing Play. Body pose
+  /// is sent whenever EITHER this or teleop is active.
+  /// </summary>
+  public void SetNeckTrackingActive(bool active) { _neckActive = active; ApplyPerfState(); }
+
+  // Quest power/clock management. Body-pose freshness (and thus neck responsiveness) and the WebRTC
+  // video decode are both bounded by the render frame rate, which the Quest down-clocks when the
+  // operator is relatively still — e.g. looking around with the neck before teleop. That down-clock is
+  // why the neck lags and ~1s of feed latency builds up pre-teleop, then "snaps back" once active
+  // teleop boosts the clocks. Pin CPU/GPU to SustainedHigh and the display to its max refresh whenever
+  // the neck OR teleop is active so both stay snappy; relax to SustainedLow when idle to save power.
+  private void ApplyPerfState()
+  {
+    bool hi = _neckActive || _teleopActive;
+    try
+    {
+      var lvl = hi ? OVRManager.ProcessorPerformanceLevel.SustainedHigh
+                   : OVRManager.ProcessorPerformanceLevel.SustainedLow;
+      OVRManager.suggestedCpuPerfLevel = lvl;
+      OVRManager.suggestedGpuPerfLevel = lvl;
+      if (hi)
+      {
+        var avail = OVRPlugin.systemDisplayFrequenciesAvailable;
+        if (avail != null && avail.Length > 0)
+        {
+          float max = 0f;
+          foreach (var f in avail) if (f > max) max = f;
+          if (max > 0f) OVRPlugin.systemDisplayFrequency = max;
+        }
+      }
+    }
+    catch (System.Exception e)
+    {
+      Debug.LogWarning($"[WebRTCController] ApplyPerfState failed: {e.Message}");
+    }
+  }
 
   // Use a single volatile variable to store the latest pose data.
   // This avoids queuing and accumulating latency.
@@ -103,6 +157,9 @@ public class WebRTCController : MonoBehaviour
     serverUrl = NormalizeServerUrl(serverUrl);
     PlayerPrefs.SetString("serverUrl", serverUrl);
     PlayerPrefs.Save();
+
+    // Set the initial Quest clock state (idle until neck/teleop go active; see ApplyPerfState).
+    ApplyPerfState();
 
     // Load video stream visibility setting
     bool savedVideoVisible = PlayerPrefs.GetInt("videoStreamVisible", videoStreamVisible ? 1 : 0) == 1;
@@ -253,6 +310,9 @@ public class WebRTCController : MonoBehaviour
       aprilTagChannel.Close();
       aprilTagChannel = null;
     }
+    if (hapticsChannel != null) { hapticsChannel.Close(); hapticsChannel = null; }
+    if (unityCmdsChannel != null) { unityCmdsChannel.Close(); unityCmdsChannel = null; }
+    if (motorStatsChannel != null) { motorStatsChannel.Close(); motorStatsChannel = null; }
     if (videoTrack != null)
     {
       videoTrack.Dispose();
@@ -284,9 +344,11 @@ public class WebRTCController : MonoBehaviour
     {
       Debug.LogWarning("[WebRTCController] SetTeleopActive(true) ignored — not connected.");
       _teleopActive = false;
+      ApplyPerfState();
       return;
     }
     _teleopActive = active;
+    ApplyPerfState();
     Debug.Log($"[WebRTCController] Teleop {(active ? "started" : "paused")}.");
   }
 
@@ -415,6 +477,30 @@ public void ToggleVideoStream(bool isOn)
     // body_pose / apriltag_pose).
     unityStateChannel = pc.CreateDataChannel("unity_state");
     SetupDataChannelEvents(unityStateChannel);
+
+    // Manager→XR control channels, CLIENT-created here so they ride the offer's SCTP section and use
+    // the proven offerer-opens-channel path (answerer/server-opened channels don't reliably reach
+    // Unity's libwebrtc — this is why these previously never applied). The study manager keeps sending
+    // on them unchanged. haptics is unreliable/unordered (avoid head-of-line blocking → low haptic
+    // latency); unity_cmds and motor_stats are reliable/ordered. Route each to its receiver exactly as
+    // the old OnDataChannel switch did, but with an inactive-inclusive search — MotorStatsReceiver
+    // lives on an inactive GameObject, so a plain FindObjectOfType would miss it.
+    var hapticsChannelOptions = new RTCDataChannelInit() { ordered = false, maxRetransmits = 0 };
+    hapticsChannel = pc.CreateDataChannel("haptics", hapticsChannelOptions);
+    unityCmdsChannel = pc.CreateDataChannel("unity_cmds");
+    motorStatsChannel = pc.CreateDataChannel("motor_stats");
+
+    var hapticReceiver = FindFirstObjectByType<WebRTCHapticReceiver>(FindObjectsInactive.Include);
+    if (hapticReceiver != null) hapticReceiver.OnHapticsChannelReceived(hapticsChannel);
+    else SetupDataChannelEvents(hapticsChannel);
+
+    var commandReceiver = FindFirstObjectByType<UnityCommandReceiver>(FindObjectsInactive.Include);
+    if (commandReceiver != null) commandReceiver.OnUnityCommandChannelReceived(unityCmdsChannel);
+    else SetupDataChannelEvents(unityCmdsChannel);
+
+    var motorStatsReceiver = FindFirstObjectByType<MotorStatsReceiver>(FindObjectsInactive.Include);
+    if (motorStatsReceiver != null) motorStatsReceiver.OnMotorStatsChannelReceived(motorStatsChannel);
+    else SetupDataChannelEvents(motorStatsChannel);
 
     // Create offer
     var offer = pc.CreateOffer();
@@ -657,10 +743,12 @@ public void ToggleVideoStream(bool isOn)
         }
       }
 
-      // Only send while teleop is ACTIVE (Play). When paused the connection stays up but
-      // no pose is streamed, so the robot holds its last pose (freeze). Also gate on new
+      // Send while teleop is ACTIVE (Play) OR while the camera feed is up for neck tracking
+      // (look-around before teleop). When neither is set the connection stays up but no pose
+      // streams, so the robot holds its last pose (freeze). The manager only runs full-body IK
+      // while teleop is active; with neck-only it just tracks the head bone. Also gate on new
       // data and an uncongested buffer to keep latency low.
-      if (_teleopActive && dataToSend != null && bodyPoseChannel.BufferedAmount < HIGH_WATER_MARK)
+      if ((_teleopActive || _neckActive) && dataToSend != null && bodyPoseChannel.BufferedAmount < HIGH_WATER_MARK)
       {
         bodyPoseChannel.Send(dataToSend);
       }

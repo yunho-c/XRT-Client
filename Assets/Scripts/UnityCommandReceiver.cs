@@ -62,7 +62,21 @@ public class UnityCommandReceiver : MonoBehaviour
         public string type;
         public string command;
         public bool enabled;
+        // Latency clock-sync ping fields (only present on "latency_ping"). JsonUtility leaves these
+        // at 0 for other commands.
+        public int ping_id;
+        public double t0_ms;
     }
+
+    // Monotonic Quest-side clock for latency timestamps. Stopwatch is high-resolution and safe to
+    // read from the WebRTC callback thread (unlike UnityEngine.Time, which is main-thread only).
+    private readonly System.Diagnostics.Stopwatch _clock = System.Diagnostics.Stopwatch.StartNew();
+    private double QuestNowMs() => _clock.Elapsed.TotalMilliseconds;
+    private static readonly System.Globalization.CultureInfo _inv = System.Globalization.CultureInfo.InvariantCulture;
+
+    // Throttle for periodic video-latency reports to the study manager.
+    private float _nextVideoReportTime;
+    private const float VideoReportInterval = 0.5f;
 
     void Start()
     {
@@ -108,6 +122,75 @@ public class UnityCommandReceiver : MonoBehaviour
         }
     }
 
+    // Tracks the last neck-tracking state pushed to WebRTCController so Update only acts on change.
+    private bool _lastNeckTracking = false;
+    // Tracks the last FPV-display open/closed state reported to the manager, so Update reports only
+    // on change. Baselined to the live value at the handshake so the manager's authoritative connect-
+    // time push isn't fought by a spurious pre-push report.
+    private bool _lastReportedDisplayVisible = false;
+    // Set when the unity_cmds channel arrives; Update announces readiness to the manager once.
+    private bool _announceReady = false;
+
+    void Update()
+    {
+        if (webRTCController == null) return;
+
+        // Once the manager's command channel is up, tell the manager we're ready so it pushes its
+        // authoritative toggle/streaming state — AFTER the channel is open, so the push can't be
+        // dropped. This is what lets the manager overwrite whatever the operator set in VR before
+        // connecting (and sync the in-VR toggle UI). Fires once per (re)connection.
+        if (_announceReady)
+        {
+            _announceReady = false;
+            // Baseline the display-state report to the current value so the manager's authoritative
+            // connect-time push (which may change it) isn't pre-empted by a stale report.
+            if (stereoReceiver != null) _lastReportedDisplayVisible = stereoReceiver.videoStreamVisible;
+            webRTCController.SendUnityState("{\"type\":\"unity_state\",\"command\":\"unity_ready\"}");
+        }
+
+        // Keep WebRTCController's neck gate in sync with the actual stereo streaming state, so
+        // body pose streams for Ostrich-neck head tracking whenever the camera feed is up — even
+        // before teleop starts (look-around). Polled (a cheap bool compare) so it covers EVERY
+        // way the stream can start/stop: auto-start on launch, the in-VR Streaming Connection
+        // button, and the study manager's Streaming Feed button.
+        if (stereoReceiver == null) return;
+        // Gate neck body-pose on a STABLE "camera feed is up" signal (the viewport is active and
+        // shown), NOT on the live connection state (IsStreamingActive). The connection state dips
+        // briefly during every latency-watchdog resync, which would chop the body-pose stream and
+        // make the neck stutter/lag pre-teleop. The viewport active+visible flags don't change
+        // during a resync, so the neck stays smooth — matching the stable gate teleop uses.
+        bool active = stereoReceiver.gameObject.activeInHierarchy && stereoReceiver.videoStreamVisible;
+        if (active != _lastNeckTracking)
+        {
+            _lastNeckTracking = active;
+            webRTCController.SetNeckTrackingActive(active);
+        }
+
+        // Mirror the FPV display's open/closed state back to the study manager so its toggle reflects
+        // whether the video canvas is shown in the headset. Poll-based so it covers EVERY way it can
+        // change (manager command, in-VR button, auto-start). Uses the STABLE videoStreamVisible flag,
+        // NOT the live connection (IsStreamingActive dips on each latency-watchdog resync → would spam).
+        bool displayVisible = stereoReceiver.videoStreamVisible;
+        if (displayVisible != _lastReportedDisplayVisible)
+        {
+            _lastReportedDisplayVisible = displayVisible;
+            ReportToggleState("show_streaming_viewport", displayVisible);
+        }
+
+        // Periodically report the video receive-latency breakdown (jitter buffer + decode + net) to
+        // the study manager, which adds estimated capture/encode + display latency for the full
+        // glass-to-glass budget.
+        if (Time.unscaledTime >= _nextVideoReportTime && stereoReceiver.HasVideoLatency)
+        {
+            _nextVideoReportTime = Time.unscaledTime + VideoReportInterval;
+            string json = "{\"type\":\"unity_state\",\"command\":\"video_latency\"" +
+                          ",\"jitter_ms\":" + stereoReceiver.VideoJitterMs.ToString("F2", _inv) +
+                          ",\"decode_ms\":" + stereoReceiver.VideoDecodeMs.ToString("F2", _inv) +
+                          ",\"net_ms\":"    + stereoReceiver.VideoNetMs.ToString("F2", _inv) + "}";
+            webRTCController.SendUnityState(json);
+        }
+    }
+
     // ── Reverse reporting (Unity → study manager) ──────────────────────────────
     // One listener per in-VR toggle; fired only on real operator interaction.
 
@@ -147,9 +230,12 @@ public class UnityCommandReceiver : MonoBehaviour
         channel.OnMessage = bytes =>
         {
             string message = System.Text.Encoding.UTF8.GetString(bytes);
+            // Capture the arrival time HERE (on the WebRTC thread) so the latency clock-sync isn't
+            // skewed by the main-thread dispatch delay below.
+            double recvMs = QuestNowMs();
             // Data-channel callbacks can fire off the main thread; marshal back before
             // touching GameObjects / Unity APIs.
-            UnityMainThreadDispatcher.Instance().Enqueue(() => HandleMessage(message));
+            UnityMainThreadDispatcher.Instance().Enqueue(() => HandleMessage(message, recvMs));
         };
 
         if (showDebugLogs)
@@ -160,6 +246,9 @@ public class UnityCommandReceiver : MonoBehaviour
         // states (incl. streaming) to overwrite the XR app, so Unity does NOT report its own
         // state up at connect time (that would fight the manager's push). Runtime operator
         // changes are still mirrored back via the reverse 'unity_state' reports below.
+        // Announce readiness (from Update, on the main thread) so the manager pushes its
+        // authoritative state now that this channel is open.
+        _announceReady = true;
     }
 
     /// <summary>
@@ -182,6 +271,14 @@ public class UnityCommandReceiver : MonoBehaviour
         if (stereoReceiver != null)
         {
             stereoReceiver.ToggleVideoStream(show);
+            // Showing should always yield a LIVE canvas: if the WHEP feed isn't up (e.g. it was never
+            // auto-started, or an error dropped it), connect it. Hiding keeps the connection up so a
+            // re-show is instant and low-latency — it never tears the peer down (that's the in-VR
+            // Streaming Connection button's job), which is what made the old toggle fragile.
+            if (show && !stereoReceiver.IsStreamingActive)
+            {
+                stereoReceiver.StartStream();
+            }
         }
         else if (webRTCController != null)
         {
@@ -217,10 +314,10 @@ public class UnityCommandReceiver : MonoBehaviour
         // on cancel — that would deactivate the receiver and break the retry).
         stereoReceiver.ToggleVideoStream(true);
         if (streamingDisplayToggle != null) streamingDisplayToggle.SetIsOnWithoutNotify(true);
-        bool nowConnected = stereoReceiver.ToggleConnection();
-        // Mirror the resulting connection state back to the study manager so its
-        // Streaming Feed button reflects what the operator just did in VR.
-        ReportToggleState("toggle_streaming_connection", nowConnected);
+        stereoReceiver.ToggleConnection();
+        // The manager's FPV-display toggle now tracks canvas VISIBILITY (videoStreamVisible), which
+        // ToggleVideoStream(true) above just set — the poll in Update() reports it, so no explicit
+        // connection-state report is needed here.
     }
 
     /// <summary>
@@ -256,7 +353,7 @@ public class UnityCommandReceiver : MonoBehaviour
         }
     }
 
-    void HandleMessage(string message)
+    void HandleMessage(string message, double recvMs)
     {
         UnityCommandMessage cmd;
         try
@@ -271,6 +368,22 @@ public class UnityCommandReceiver : MonoBehaviour
 
         if (cmd == null || string.IsNullOrEmpty(cmd.command))
         {
+            return;
+        }
+
+        // Latency clock-sync: echo the manager's t0 plus our receive (t1) and send (t2) times so the
+        // manager can compute the round-trip on the teleop connection. Handled before the debug log
+        // and the switch since it fires ~1 Hz and isn't an operator-facing command.
+        if (cmd.command == "latency_ping")
+        {
+            if (webRTCController != null)
+            {
+                string pong = "{\"type\":\"unity_state\",\"command\":\"latency_pong\",\"ping_id\":" + cmd.ping_id +
+                              ",\"t0_ms\":" + cmd.t0_ms.ToString("F3", _inv) +
+                              ",\"t1_ms\":" + recvMs.ToString("F3", _inv) +
+                              ",\"t2_ms\":" + QuestNowMs().ToString("F3", _inv) + "}";
+                webRTCController.SendUnityState(pong);
+            }
             return;
         }
 
