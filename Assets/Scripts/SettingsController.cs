@@ -15,11 +15,13 @@ public class SettingsController : MonoBehaviour
     public WebRTCHapticReceiver hapticReceiver;
     public GameObject           settingsPanel;
     public TeleopVisualsController teleopVisuals;
+    public ZEDFOVFiller         zedFovFiller;
 
     [Header("Toggles")]
     public Toggle hapticsToggle;
     public Toggle audioHapticsToggle;
     public Toggle avatarVisualsToggle;
+    public Toggle videoFillToggle;
 
     void Start()
     {
@@ -32,10 +34,13 @@ public class SettingsController : MonoBehaviour
         }
         if (avatarVisualsToggle != null && teleopVisuals != null)
             avatarVisualsToggle.isOn = teleopVisuals.showAvatarDuringTeleop;
+        if (videoFillToggle != null && zedFovFiller != null)
+            videoFillToggle.isOn = zedFovFiller.IsBlackBorder;
 
         if (hapticsToggle       != null) hapticsToggle.onValueChanged.AddListener(SetHapticsEnabled);
         if (audioHapticsToggle  != null) audioHapticsToggle.onValueChanged.AddListener(SetAudioHapticsEnabled);
         if (avatarVisualsToggle != null) avatarVisualsToggle.onValueChanged.AddListener(SetAvatarVisualsEnabled);
+        if (videoFillToggle     != null) videoFillToggle.onValueChanged.AddListener(SetVideoBlackBorder);
     }
 
     public void ToggleSettingsPanel()
@@ -67,6 +72,13 @@ public class SettingsController : MonoBehaviour
     {
         // ON = show the ghost-outline avatar during teleop; OFF = hide it entirely.
         if (teleopVisuals != null) teleopVisuals.SetShowAvatarDuringTeleop(isOn);
+    }
+
+    public void SetVideoBlackBorder(bool isOn)
+    {
+        // ON = opaque black around the video canvas; OFF = extend the edge pixels to fill the whole
+        // view (the operator's original look — no geometric stretch). Persisted in ZEDFOVFiller.
+        if (zedFovFiller != null) zedFovFiller.SetBlackBorder(isOn);
     }
 
     // ── Remote-state sync (driven by UnityCommandReceiver / study manager) ──────

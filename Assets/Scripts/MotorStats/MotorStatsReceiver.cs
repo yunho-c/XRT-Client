@@ -54,7 +54,6 @@ public class MotorStatsReceiver : MonoBehaviour
 
     // ── Internal ─────────────────────────────────────────────────────────────
     private RTCDataChannel _channel;
-    private bool _channelRegistered;
 
     [Serializable]
     private class MotorStatsMessage
@@ -73,12 +72,16 @@ public class MotorStatsReceiver : MonoBehaviour
             webRTCController = FindObjectOfType<WebRTCController>();
     }
 
-    /// <summary>Called by WebRTCController when the server-initiated 'motor_stats' channel opens.</summary>
+    /// <summary>
+    /// Called by WebRTCController with each (re)connection's motor_stats channel. Rebinds
+    /// unconditionally — the old one-shot latch here meant every channel after the FIRST
+    /// connection was ignored, silently killing motor temps/torques (and overheat warnings)
+    /// for the rest of the app run after any reconnect.
+    /// </summary>
     public void OnMotorStatsChannelReceived(RTCDataChannel channel)
     {
-        if (_channelRegistered) return;
+        if (_channel != null && !ReferenceEquals(_channel, channel)) _channel.OnMessage = null;
         _channel = channel;
-        _channelRegistered = true;
 
         channel.OnMessage = bytes =>
         {

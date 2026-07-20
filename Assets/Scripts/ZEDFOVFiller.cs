@@ -33,8 +33,14 @@ public class ZEDFOVFiller : MonoBehaviour
     [SerializeField] private float zedVerticalFOV = 54f;
 
     [Header("Fill Mode")]
-    [Tooltip("LetterboxCorrect: natural angular scale, black bars. StretchToFill: no bars, distorted scale.")]
+    [Tooltip("LetterboxCorrect: natural angular scale (recommended). StretchToFill: distorts the image " +
+             "geometry to fill — NOT used by the Settings toggle (that only switches the periphery fill).")]
     [SerializeField] private FillMode fillMode = FillMode.LetterboxCorrect;
+
+    [Tooltip("When ON, the periphery outside the natural-size video is opaque BLACK (black around the " +
+             "canvas). When OFF, the edge pixels are extended to fill the whole view (the original look). " +
+             "Toggled from the Settings panel; saved across reboots.")]
+    [SerializeField] private bool blackOutside = false;
 
     [Header("Image Orientation")]
     [Tooltip("Flip the image vertically. Toggle this if the video appears upside down.")]
@@ -113,6 +119,7 @@ public class ZEDFOVFiller : MonoBehaviour
     const string PP_CSX  = "zedCanvasScaleX";
     const string PP_CSY  = "zedCanvasScaleY";
     const string PP_CDEP = "zedCanvasDepth";
+    const string PP_BLACK = "zedBlackBorder";    // 1 = black around canvas, 0 = edge-pixel fill
 
     private Renderer _renderer;
     private MaterialPropertyBlock _mpb;
@@ -166,6 +173,7 @@ public class ZEDFOVFiller : MonoBehaviour
         _mpb.SetFloat("_CanvasScaleX", canvasScaleX);
         _mpb.SetFloat("_CanvasScaleY", canvasScaleY);
         _mpb.SetFloat("_CanvasDepth", canvasDepth);
+        _mpb.SetFloat("_BlackOutside", blackOutside ? 1f : 0f);
         _renderer.SetPropertyBlock(_mpb);
     }
 
@@ -178,6 +186,24 @@ public class ZEDFOVFiller : MonoBehaviour
     public float UserOffsetX => userOffsetX;
     public float UserOffsetY => userOffsetY;
     public float IPDShift => ipdShift;
+
+    // ── Border-mode API (settings toggle; saved to PlayerPrefs) ─────────────────
+    // The feed always renders at natural angular size. This toggle only changes what fills the
+    // periphery OUTSIDE that image (it does NOT stretch/distort the video geometry):
+    //   false (default) = extend the edge pixels to fill the whole view (the operator's original look).
+    //   true            = opaque BLACK around the video canvas (shader _BlackOutside).
+
+    public bool IsBlackBorder => blackOutside;
+
+    /// <summary>true = black around the video canvas; false = edge-pixel fill. Persisted across reboots.</summary>
+    public void SetBlackBorder(bool on)
+    {
+        blackOutside = on;
+        PlayerPrefs.SetInt(PP_BLACK, on ? 1 : 0);
+        PlayerPrefs.Save();
+    }
+
+    public void ToggleBlackBorder() => SetBlackBorder(!blackOutside);
 
     /// <summary>Adjust the per-eye IPD/convergence shift by dir(±1) * step, clamped to [0, maxIPD].
     /// Helps the magnified stereo fuse (reduces the double-vision "blur" when zoomed in).</summary>
@@ -274,6 +300,9 @@ public class ZEDFOVFiller : MonoBehaviour
         canvasScaleX    = PlayerPrefs.GetFloat(PP_CSX,  canvasScaleX);
         canvasScaleY    = PlayerPrefs.GetFloat(PP_CSY,  canvasScaleY);
         canvasDepth     = PlayerPrefs.GetFloat(PP_CDEP, canvasDepth);
+        // Always render at natural angular size; the periphery-fill mode is the only saved choice.
+        fillMode = FillMode.LetterboxCorrect;
+        blackOutside = PlayerPrefs.GetInt(PP_BLACK, blackOutside ? 1 : 0) == 1;
     }
 
     // ── Resize Display (canvas) panel API ──────────────────────────────────────

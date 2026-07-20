@@ -93,6 +93,23 @@ public class MediaMTXReceiver : MonoBehaviour
     private int _latencyStrikes;
     private float _lastResyncTime = -999f;   // Time.realtimeSinceStartup of the last resync (cooldown gate)
 
+    // ── Connection supervisor ───────────────────────────────────────────────────
+    // _wantStreaming = the operator's INTENT that the feed be up. Set true by every connect entry
+    // point (auto-start, ToggleConnection connect leg, StartStream from manager/UI). Cleared ONLY
+    // by explicit disconnects (ToggleConnection cancel leg, StopStream, manager disconnect) via
+    // the public CancelConnection. Internal teardowns (watchdog resync, transient connect errors)
+    // go through TeardownConnection, which preserves intent so the supervisor keeps self-healing.
+    // This is what makes the feed survive headset-doffs, WiFi blips, and failed resync legs —
+    // previously every failure was a terminal "Press to retry" with no reconnect path at all.
+    private bool  _wantStreaming;
+    private int   _reconnectFailures;     // consecutive failed attempts → capped backoff
+    private float _nextReconnectTime;     // realtimeSinceStartup gate for the next attempt
+    private Coroutine _resumeProbe;
+    private float _connectStartedTime;    // when the current attempt began (hung-attempt detection)
+    private const float SupervisorPollSeconds = 2f;
+    private const float ReconnectBaseDelay    = 2f;
+    private const float ReconnectMaxDelay     = 15f;
+
     // Latest measured video RECEIVE-latency breakdown (ms), from the primary (left) eye's WebRTC
     // stats — read by UnityCommandReceiver and reported to the study manager for the end-to-end
     // glass-to-glass latency budget. NetMs is the camera-connection RTT/2 (one-way). These cover
@@ -112,6 +129,17 @@ public class MediaMTXReceiver : MonoBehaviour
     private Texture _matTexRight;
     private MeshRenderer _meshRenderer;
 
+    // ── Pose-linked video address ───────────────────────────────────────────────
+    // The VideoStreaming address auto-derives from the PoseReceiving IP (WebRTCController's saved
+    // "serverUrl") as "{poseHost}:8889/zed_stereo", so the operator enters the host only once. The
+    // user can still edit the VideoStreaming field by hand; that manual value is remembered
+    // (PP_VIDEO_MANUAL) and persists across sessions until the pose IP is changed again.
+    private const string PP_VIDEO_MANUAL = "stereoBaseManual"; // 1 = user overrode the video address
+    private const string POSE_URL_PREF   = "serverUrl";        // WebRTCController's saved pose URL
+    private const string VIDEO_SUFFIX    = ":8889/zed_stereo"; // appended to the pose host
+    // The clean base address last set (host:port/path, no /whep), used to persist on quit.
+    private string _baseAddress;
+
     void Start()
     {
         _meshRenderer = GetComponent<MeshRenderer>();
@@ -125,14 +153,14 @@ public class MediaMTXReceiver : MonoBehaviour
         bool savedVideoVisible = PlayerPrefs.GetInt("stereoStreamVisible", videoStreamVisible ? 1 : 0) == 1;
         ToggleVideoStream(savedVideoVisible);
 
-        // 2. Load and set the server URL (sets the internal urlLeft/urlRight)
-        string savedBaseAddress = PlayerPrefs.GetString("stereoBaseUrl", defaultBaseAddress);
-        SetBaseStreamUrl(savedBaseAddress);
-
-        // 3. Initialize Input Field and Status Text
+        // 2+3. Resolve + apply the base video address (manual override, else derived from the pose
+        //      IP) and populate the input field. Factored into InitializeBaseAddress so launch code
+        //      can call it too. The field stays editable; a user edit marks a manual override.
+        InitializeBaseAddress();
         if (ipAddressInputField != null)
         {
-            ipAddressInputField.text = savedBaseAddress;
+            ipAddressInputField.onEndEdit.RemoveListener(OnVideoAddressManualEdit);
+            ipAddressInputField.onEndEdit.AddListener(OnVideoAddressManualEdit);
         }
         if (statusText != null)
         {
@@ -148,6 +176,11 @@ public class MediaMTXReceiver : MonoBehaviour
         // watchdog samples the receive latency and resyncs to flush it when it crosses the limit.
         StartCoroutine(LatencyWatchdog());
 
+        // Self-healing: while the operator INTENDS the feed to be up, reconnect automatically
+        // after drops (headset doff, WiFi blip, failed resync leg) instead of dying on
+        // "Press to retry". Reads one enum per 2s while healthy — latency-neutral.
+        StartCoroutine(ConnectionSupervisor());
+
         // Do NOT disturb a connection that was already kicked off before Start ran. This
         // GameObject starts inactive and is activated on demand — e.g. the Streaming Connection
         // button (ToggleStreamingConnection) and the study manager (SetStreamingConnection) call
@@ -160,8 +193,8 @@ public class MediaMTXReceiver : MonoBehaviour
         {
             SetConnectToggleInteractable(true);
             InitializePeerConnections();
-            Debug.Log($"Auto-starting connection to: {savedBaseAddress}");
-            UpdateStatusText($"Auto-connecting to: {savedBaseAddress}...");
+            Debug.Log($"Auto-starting connection to: {_baseAddress}");
+            UpdateStatusText($"Auto-connecting to: {_baseAddress}...");
             StartStream();
         }
     }
@@ -187,13 +220,9 @@ public class MediaMTXReceiver : MonoBehaviour
         _matTexRight = null;
         UpdateDisplayVisibility();
 
-        RTCConfiguration config = new RTCConfiguration
-        {
-            iceServers = new[]
-            {
-                new RTCIceServer {urls = new[] {"stun:stun.l.google.com:19302"}}
-            }
-        };
+        // No ICE servers: mediamtx is on the same LAN (raw IP), so host candidates are all that's
+        // needed, and a cold Google STUN/DNS stall would slow every reconnect/watchdog-resync.
+        RTCConfiguration config = new RTCConfiguration { iceServers = new RTCIceServer[0] };
 
         // Initialize left eye stream
         pcLeft = new RTCPeerConnection(ref config);
@@ -210,6 +239,9 @@ public class MediaMTXReceiver : MonoBehaviour
             Debug.Log($"Left Connection State: {state}");
             if (state == RTCPeerConnectionState.Connected)
             {
+                // Healthy again: reset the supervisor's reconnect backoff (both stream modes).
+                _reconnectFailures = 0;
+                _nextReconnectTime = 0f;
                 // In single-stream (SBS) mode pcLeft IS the whole feed → active on connect.
                 if (singleStreamSbs) ResetConnectionState("Streaming active.");
                 else UpdateStatusText("Left Peer connected!");
@@ -395,7 +427,10 @@ public class MediaMTXReceiver : MonoBehaviour
     /// <returns>The new intended state: true if a connection was started, false if cancelled.</returns>
     public bool ToggleConnection()
     {
-        if (isConnecting || IsConnected())
+        // _wantStreaming counts as "on": while the supervisor is between reconnect attempts the
+        // pcs read dead, but the operator sees the toggle latched ON — pressing it must CANCEL
+        // the retry loop, not stack another connect.
+        if (isConnecting || IsConnected() || _wantStreaming)
         {
             CancelConnection("Streaming connection cancelled — press to retry.");
             return false;
@@ -407,6 +442,9 @@ public class MediaMTXReceiver : MonoBehaviour
     // Public function to be called by a dedicated "Connect" button.
     public void StartStream()
     {
+        _wantStreaming = true;   // operator intent: the supervisor keeps this alive until an explicit disconnect
+        if (connectToggle != null) connectToggle.SetIsOnWithoutNotify(true);
+
         // Already mid-connect: do nothing (cancel is handled by ToggleConnection).
         if (isConnecting)
         {
@@ -415,9 +453,11 @@ public class MediaMTXReceiver : MonoBehaviour
         }
 
         // Ensure we have fresh peer connections (recreate if missing or in a dead state). In SBS
-        // mode only pcLeft is used.
-        bool deadLeft  = pcLeft == null || pcLeft.ConnectionState == RTCPeerConnectionState.Closed || pcLeft.ConnectionState == RTCPeerConnectionState.Failed;
-        bool deadRight = pcRight == null || pcRight.ConnectionState == RTCPeerConnectionState.Closed || pcRight.ConnectionState == RTCPeerConnectionState.Failed;
+        // mode only pcLeft is used. Disconnected counts as DEAD here: re-offering on a pc parked
+        // in Disconnected (typical after a doff/blip) can never reconnect and used to latch
+        // isConnecting forever — the "FPV button does nothing" bug.
+        bool deadLeft  = pcLeft == null || pcLeft.ConnectionState == RTCPeerConnectionState.Closed || pcLeft.ConnectionState == RTCPeerConnectionState.Failed || pcLeft.ConnectionState == RTCPeerConnectionState.Disconnected;
+        bool deadRight = pcRight == null || pcRight.ConnectionState == RTCPeerConnectionState.Closed || pcRight.ConnectionState == RTCPeerConnectionState.Failed || pcRight.ConnectionState == RTCPeerConnectionState.Disconnected;
         if (deadLeft || (!singleStreamSbs && deadRight))
         {
             InitializePeerConnections();
@@ -426,6 +466,7 @@ public class MediaMTXReceiver : MonoBehaviour
         // NOTE: intentionally do NOT disable the connect toggle here — it must stay pressable so
         // the user can press again to cancel a snagged connection.
         isConnecting = true;
+        _connectStartedTime = Time.realtimeSinceStartup;
 
         UpdateStatusText($"Connecting to {urlLeft}{(singleStreamSbs ? "" : " / " + urlRight)}...");
 
@@ -435,15 +476,113 @@ public class MediaMTXReceiver : MonoBehaviour
     }
 
     /// <summary>
-    /// Cancel any in-progress / established connection and re-create fresh peer connections so the
-    /// next StartStream() is a clean retry. Keeps the GameObject active and WebRTC.Update running.
+    /// Bring the feed LIVE if it isn't. Idempotent while a fresh attempt is negotiating; recovers a
+    /// HUNG attempt (a stale pc that never fired another state change, leaving isConnecting latched)
+    /// by cancelling first. Safe entry point for the manager's FPV/feed-ON commands.
+    /// </summary>
+    public void EnsureLiveStream()
+    {
+        if (IsConnected()) return;                                   // live — nothing to do
+        if (isConnecting &&
+            Time.realtimeSinceStartup - _connectStartedTime < Mathf.Max(1f, connectTimeoutSeconds) + 5f)
+            return;                                                  // young attempt — let it finish
+        if (isConnecting) TeardownConnection("Retrying stream connection...");  // hung — clean re-init
+        StartStream();
+    }
+
+    /// <summary>
+    /// EXPLICIT disconnect (operator button / manager off-command): clears the streaming intent so
+    /// the supervisor stops healing, then tears down. Internal teardowns (watchdog resync, transient
+    /// connect errors) must use TeardownConnection instead, which PRESERVES the intent.
     /// </summary>
     public void CancelConnection(string reason = "Disconnected.")
+    {
+        _wantStreaming = false;
+        if (connectToggle != null) connectToggle.SetIsOnWithoutNotify(false);
+        TeardownConnection(reason);
+    }
+
+    // Tear down and re-create fresh peer connections so the next StartStream() is a clean retry.
+    // Keeps the GameObject active, WebRTC.Update running, and the _wantStreaming intent UNTOUCHED.
+    private void TeardownConnection(string reason)
     {
         isConnecting = false;
         SetConnectToggleInteractable(true);
         InitializePeerConnections();   // stops tracked coroutines + disposes + recreates
         UpdateStatusText(reason);
+    }
+
+    // A connect attempt failed (offer/SDP/WHEP-POST error). Preserve intent, apply capped backoff,
+    // and let the supervisor retry — previously these paths dead-ended at "Press to retry", which
+    // is how one transient error during an idle-time resync permanently killed the feed.
+    private void OnConnectAttemptFailed(string reason)
+    {
+        _reconnectFailures = Mathf.Min(_reconnectFailures + 1, 3);
+        float delay = Mathf.Min(ReconnectMaxDelay, ReconnectBaseDelay * (1 << _reconnectFailures)); // 4/8/15/15s
+        _nextReconnectTime = Time.realtimeSinceStartup + delay;
+        TeardownConnection(_wantStreaming ? reason + $" Auto-retrying in {delay:F0}s..." : reason);
+    }
+
+    // ── Connection supervisor ───────────────────────────────────────────────────
+    // While the feed is WANTED but down, reconnect with capped backoff. Two consecutive down
+    // polls (~2-4s grace) are required so a transient ICE 'Disconnected' that libwebrtc heals
+    // by itself doesn't trigger a needless full re-offer blackout.
+    private IEnumerator ConnectionSupervisor()
+    {
+        var wait = new WaitForSeconds(SupervisorPollSeconds);
+        int downStrikes = 0;
+        while (true)
+        {
+            yield return wait;
+            if (!_wantStreaming || isConnecting || IsConnected()) { downStrikes = 0; continue; }
+            if (++downStrikes < 2) continue;
+            if (Time.realtimeSinceStartup < _nextReconnectTime) continue;
+            Debug.LogWarning("[MediaMTXReceiver] Supervisor: stream down but wanted — reconnecting.");
+            _nextReconnectTime = Time.realtimeSinceStartup + ReconnectBaseDelay;   // no double-fire
+            downStrikes = 0;
+            TeardownConnection("Reconnecting stream...");   // fresh pcs (clears zombie Disconnected pcs)
+            yield return null;
+            StartStream();
+        }
+    }
+
+    // Headset re-donned (or app otherwise resumed): the WHEP session may have been reaped by
+    // mediamtx during the OS suspend while the pc still *claims* Connected. Probe for actually
+    // flowing frames and force a reconnect if none arrive; a genuinely dead pc is handled by
+    // the supervisor without this probe.
+    void OnApplicationPause(bool paused)
+    {
+        if (paused || !_wantStreaming) return;
+        _nextReconnectTime = 0f;                       // resume: allow immediate supervisor action
+        if (_resumeProbe != null) StopCoroutine(_resumeProbe);
+        _resumeProbe = StartCoroutine(ProbeAfterResume());
+    }
+
+    private IEnumerator ProbeAfterResume()
+    {
+        yield return new WaitForSeconds(1f);
+        if (!_wantStreaming || isConnecting || !IsConnected()) yield break;  // down → supervisor's job
+        uint before = 0; bool got = false;
+        var op = pcLeft.GetStats(); yield return op;
+        if (!op.IsError && op.Value != null) using (var r = op.Value)
+            foreach (var s in r.Stats.Values)
+                if (s is RTCInboundRTPStreamStats inb && inb.kind == "video") { before = inb.framesDecoded; got = true; }
+        if (!got) yield break;
+        yield return new WaitForSeconds(2f);
+        if (!_wantStreaming || isConnecting || !IsConnected()) yield break;
+        uint after = before;
+        var op2 = pcLeft.GetStats(); yield return op2;
+        if (!op2.IsError && op2.Value != null) using (var r = op2.Value)
+            foreach (var s in r.Stats.Values)
+                if (s is RTCInboundRTPStreamStats inb && inb.kind == "video") after = inb.framesDecoded;
+        if (after == before)   // pc claims Connected but no frames: the WHEP session died in suspend
+        {
+            Debug.LogWarning("[MediaMTXReceiver] No frames after resume — forcing stream reconnect.");
+            TeardownConnection("Reconnecting stream after headset resume...");
+            yield return null;
+            StartStream();
+        }
+        _resumeProbe = null;
     }
 
     // Public method to manually stop the connection.
@@ -493,7 +632,10 @@ public class MediaMTXReceiver : MonoBehaviour
                     _latencyStrikes = 0;
                     _latLeft.hasBaseline = false;
                     _latRight.hasBaseline = false;
-                    CancelConnection("Re-syncing video to clear latency...");
+                    // TeardownConnection (NOT CancelConnection): a resync is an internal heal and
+                    // must never clear the streaming intent — if this StartStream leg fails
+                    // transiently, the supervisor now retries instead of stranding the feed.
+                    TeardownConnection("Re-syncing video to clear latency...");
                     yield return null;     // let InitializePeerConnections settle
                     StartStream();
                     yield return wait;     // give the new connection a beat before sampling again
@@ -581,12 +723,40 @@ public class MediaMTXReceiver : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// Resolve the base video address (manual override if set, else derived from the PoseReceiving
+    /// IP as "{host}:8889/zed_stereo") and apply it: rebuild the stream URLs and populate the
+    /// VideoStreaming input field. Does NOT change the manual-override flag, so it is safe to call
+    /// from launch code. Called from Start AND from WebRTCController.Start so the field shows the
+    /// correct value immediately — this receiver's GameObject starts inactive, so its own Start()
+    /// does not run until the video display is first shown.
+    /// </summary>
+    public void InitializeBaseAddress()
+    {
+        bool videoManual = PlayerPrefs.GetInt(PP_VIDEO_MANUAL, 0) == 1;
+        string baseAddress;
+        if (videoManual)
+        {
+            baseAddress = PlayerPrefs.GetString("stereoBaseUrl", defaultBaseAddress);
+        }
+        else
+        {
+            string poseHost = ExtractHost(PlayerPrefs.GetString(POSE_URL_PREF, ""));
+            baseAddress = !string.IsNullOrEmpty(poseHost)
+                ? poseHost + VIDEO_SUFFIX
+                : PlayerPrefs.GetString("stereoBaseUrl", defaultBaseAddress);
+        }
+        SetBaseStreamUrl(baseAddress);
+        if (ipAddressInputField != null) ipAddressInputField.SetTextWithoutNotify(baseAddress);
+    }
+
     // Public method to be called from a UI InputField's On End Edit (String) event
     public void SetBaseStreamUrl(string baseAddressAndPort)
     {
         if (string.IsNullOrEmpty(baseAddressAndPort)) return;
 
         // 1. Save the new base address
+        _baseAddress = baseAddressAndPort;
         PlayerPrefs.SetString("stereoBaseUrl", baseAddressAndPort);
         PlayerPrefs.Save();
 
@@ -604,6 +774,47 @@ public class MediaMTXReceiver : MonoBehaviour
         }
 
         UpdateStatusText($"URL set: {baseAddressAndPort}");
+    }
+
+    /// <summary>
+    /// Auto-set the video base address from the PoseReceiving IP as "{host}:8889/zed_stereo".
+    /// Called by <see cref="WebRTCController.SetServerIp"/> whenever the pose IP changes, so the two
+    /// stay in sync (the operator enters the host only once). Clears the manual-override flag — the
+    /// pose becomes the source of truth again — and updates the VideoStreaming input field. The user
+    /// can still edit that field afterwards to override; that override is then remembered.
+    /// </summary>
+    public void ApplyPoseDerivedBase(string poseIpOrHost)
+    {
+        string host = ExtractHost(poseIpOrHost);
+        if (string.IsNullOrEmpty(host)) return;   // nothing to derive from (blank pose field)
+        string derived = host + VIDEO_SUFFIX;
+        PlayerPrefs.SetInt(PP_VIDEO_MANUAL, 0);
+        SetBaseStreamUrl(derived);                // saves stereoBaseUrl + rebuilds urlLeft/urlRight
+        if (ipAddressInputField != null) ipAddressInputField.SetTextWithoutNotify(derived);
+    }
+
+    // The user edited the VideoStreaming field by hand: remember it as a manual override so it is
+    // NOT clobbered by the pose-derived default on the next launch. (SetBaseStreamUrl — wired to the
+    // field's On End Edit — does the actual save; this only records that the value is user-chosen.)
+    private void OnVideoAddressManualEdit(string _)
+    {
+        PlayerPrefs.SetInt(PP_VIDEO_MANUAL, 1);
+        PlayerPrefs.Save();
+    }
+
+    // Extract the bare host from a pose URL / host string: strips scheme, path, and port.
+    // "http://mel06293d:8080/offer" -> "mel06293d";  "192.168.0.104" -> "192.168.0.104".
+    private static string ExtractHost(string s)
+    {
+        if (string.IsNullOrEmpty(s)) return "";
+        s = s.Trim();
+        int scheme = s.IndexOf("://");
+        if (scheme >= 0) s = s.Substring(scheme + 3);
+        int slash = s.IndexOf('/');
+        if (slash >= 0) s = s.Substring(0, slash);
+        int colon = s.IndexOf(':');
+        if (colon >= 0) s = s.Substring(0, colon);
+        return s;
     }
 
     public void ToggleVideoStream(bool isOn)
@@ -646,7 +857,7 @@ public class MediaMTXReceiver : MonoBehaviour
         yield return op;
         if (op.IsError) {
             Debug.LogError($"CreateOffer() failed for {url}");
-            CancelConnection($"Error creating offer for {url}. Press to retry.");
+            OnConnectAttemptFailed($"Error creating offer for {url}.");
             yield break;
         }
 
@@ -659,7 +870,7 @@ public class MediaMTXReceiver : MonoBehaviour
         yield return op;
         if (op.IsError) {
             Debug.LogError($"SetLocalDescription() failed for {url}");
-            CancelConnection($"Error setting local description for {url}. Press to retry.");
+            OnConnectAttemptFailed($"Error setting local description for {url}.");
             yield break;
         }
 
@@ -687,7 +898,7 @@ public class MediaMTXReceiver : MonoBehaviour
 
         if (task.Exception != null) {
             Debug.LogError($"PostOffer() failed for {url}: {task.Exception.InnerException?.Message ?? task.Exception.Message}");
-            CancelConnection($"Connection failed: {task.Exception.InnerException?.Message ?? task.Exception.Message}. Press to retry.");
+            OnConnectAttemptFailed($"Connection failed: {task.Exception.InnerException?.Message ?? task.Exception.Message}.");
             yield break;
         }
 
@@ -704,7 +915,7 @@ public class MediaMTXReceiver : MonoBehaviour
         yield return op;
         if (op.IsError) {
             Debug.LogError($"SetRemoteDescription() failed for {url}");
-            CancelConnection($"Error setting remote description for {url}. Press to retry.");
+            OnConnectAttemptFailed($"Error setting remote description for {url}.");
             yield break;
         }
 
@@ -720,12 +931,11 @@ public class MediaMTXReceiver : MonoBehaviour
         // Save the current visibility state
         PlayerPrefs.SetInt("stereoStreamVisible", videoStreamVisible ? 1 : 0);
 
-        // Save the latest successful base address
-        if (!string.IsNullOrEmpty(urlLeft))
+        // Save the latest base address (the clean host:port/path — NOT reconstructed from urlLeft,
+        // whose suffix differs between single-SBS "/whep" and dual "/right/whep").
+        if (!string.IsNullOrEmpty(_baseAddress))
         {
-             // Extract the base address part from one of the final URLs
-             string baseAddress = urlLeft.Replace("http://", "").Replace("/right/whep", "");
-             PlayerPrefs.SetString("stereoBaseUrl", baseAddress);
+             PlayerPrefs.SetString("stereoBaseUrl", _baseAddress);
         }
         PlayerPrefs.Save();
 

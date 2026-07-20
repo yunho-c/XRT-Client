@@ -56,6 +56,9 @@ public class WebRTCController : MonoBehaviour
   public bool receiveVideo = true;
   [Tooltip("Default state for video stream visibility (overridden by PlayerPrefs)")]
   public bool videoStreamVisible = true;
+  [Tooltip("Use Google STUN for NAT traversal. Leave OFF for the LAN-only robot network — a cold " +
+           "STUN/DNS lookup adds seconds to the FIRST connect (the classic 'second try works' failure).")]
+  public bool useStun = false;
   private const ulong HIGH_WATER_MARK = 1 * 1024 * 1024; // 1 MB
 
   private RTCPeerConnection pc;
@@ -74,6 +77,18 @@ public class WebRTCController : MonoBehaviour
   private VideoStreamTrack videoTrack;
   private Coroutine _sendBodyPoseCoroutine;
   private Coroutine _connectWatchdog;
+  // Tracked so StopConnection can kill in-flight signaling — otherwise a stale answer from a
+  // torn-down attempt could be applied to a NEW pc (wrong ufrag/DTLS fingerprint), poisoning it.
+  private Coroutine _startWebRTC;
+  // True while the watchdog's silent first-attempt retry is in progress. Gates the power-button
+  // auto-reset so the operator never sees the bad first attempt flicker.
+  private bool _retrying = false;
+  // Bumped by every StartConnection/StopConnection; the silent retry re-checks it after its wait
+  // so an operator press during the retry gap always wins over the automatic retry.
+  private int _connectEpoch = 0;
+  // Auto-reconnect state: only a link that WAS established auto-retries (once) on Failed.
+  private bool _wasEstablished = false;
+  private bool _autoRetryUsed = false;
 
   // Teleop gate: the WebRTC connection (power button) can be up while teleop is paused.
   // Body pose is only streamed to the server while _teleopActive is true (driven by the
@@ -106,30 +121,25 @@ public class WebRTCController : MonoBehaviour
   /// </summary>
   public void SetNeckTrackingActive(bool active) { _neckActive = active; ApplyPerfState(); }
 
-  // Quest power/clock management. Body-pose freshness (and thus neck responsiveness) and the WebRTC
-  // video decode are both bounded by the render frame rate, which the Quest down-clocks when the
-  // operator is relatively still — e.g. looking around with the neck before teleop. That down-clock is
-  // why the neck lags and ~1s of feed latency builds up pre-teleop, then "snaps back" once active
-  // teleop boosts the clocks. Pin CPU/GPU to SustainedHigh and the display to its max refresh whenever
-  // the neck OR teleop is active so both stay snappy; relax to SustainedLow when idle to save power.
+  // Quest power/clock management. The render loop drives BOTH the WebRTC video decode AND body-pose
+  // production (BodyPoseProvider fires OnPoseUpdated once per rendered frame), so any OS down-clock —
+  // which the Quest applies when the operator is relatively still — shows up as BOTH camera lag AND
+  // teleop/neck pose lag. Teleop needs consistent responsiveness, so pin CPU/GPU to SustainedHigh and
+  // the display to its max refresh whenever the app is running (NOT just during active teleop —
+  // down-clocking during connect/idle was adding pose+video latency). Power/thermals are a non-issue
+  // for a tethered study. Called from Start; re-asserted on neck/teleop changes (idempotent).
   private void ApplyPerfState()
   {
-    bool hi = _neckActive || _teleopActive;
     try
     {
-      var lvl = hi ? OVRManager.ProcessorPerformanceLevel.SustainedHigh
-                   : OVRManager.ProcessorPerformanceLevel.SustainedLow;
-      OVRManager.suggestedCpuPerfLevel = lvl;
-      OVRManager.suggestedGpuPerfLevel = lvl;
-      if (hi)
+      OVRManager.suggestedCpuPerfLevel = OVRManager.ProcessorPerformanceLevel.SustainedHigh;
+      OVRManager.suggestedGpuPerfLevel = OVRManager.ProcessorPerformanceLevel.SustainedHigh;
+      var avail = OVRPlugin.systemDisplayFrequenciesAvailable;
+      if (avail != null && avail.Length > 0)
       {
-        var avail = OVRPlugin.systemDisplayFrequenciesAvailable;
-        if (avail != null && avail.Length > 0)
-        {
-          float max = 0f;
-          foreach (var f in avail) if (f > max) max = f;
-          if (max > 0f) OVRPlugin.systemDisplayFrequency = max;
-        }
+        float max = 0f;
+        foreach (var f in avail) if (f > max) max = f;
+        if (max > 0f) OVRPlugin.systemDisplayFrequency = max;
       }
     }
     catch (System.Exception e)
@@ -157,6 +167,12 @@ public class WebRTCController : MonoBehaviour
     serverUrl = NormalizeServerUrl(serverUrl);
     PlayerPrefs.SetString("serverUrl", serverUrl);
     PlayerPrefs.Save();
+
+    // Populate the VideoStreaming address field at launch from the (freshly loaded) pose IP.
+    // MediaMTXReceiver owns that field but its GameObject starts inactive, so its own Start() does
+    // not run until the video display is first shown — do it here so the field is correct up front.
+    var media = FindFirstObjectByType<MediaMTXReceiver>(FindObjectsInactive.Include);
+    if (media != null) media.InitializeBaseAddress();
 
     // Set the initial Quest clock state (idle until neck/teleop go active; see ApplyPerfState).
     ApplyPerfState();
@@ -244,6 +260,14 @@ public class WebRTCController : MonoBehaviour
     PlayerPrefs.Save();
     statusText.text = $"Server URL set to: {serverUrl}";
     Debug.Log("Server URL set to: " + serverUrl);
+
+    // Keep the VideoStreaming address in sync: it auto-derives from this pose IP as
+    // "{ip}:8889/zed_stereo" so the operator enters the host only once. This makes the pose the
+    // source of truth again (clearing any earlier manual video override); the user can still edit
+    // the VideoStreaming field afterwards, and that manual value then persists across sessions.
+    // MediaMTXReceiver lives on an inactive GameObject, so search inactive too.
+    var media = FindFirstObjectByType<MediaMTXReceiver>(FindObjectsInactive.Include);
+    if (media != null) media.ApplyPoseDerivedBase(ipAddress);
   }
 
   /// <summary>Prepend http:// when the server URL has no scheme, so a host like
@@ -258,42 +282,114 @@ public class WebRTCController : MonoBehaviour
 
   public void StartConnection()
   {
-    // Block a duplicate attempt for ANY live peer connection — including the brief "New"
+    // Block a duplicate attempt for any LIVE peer connection — including the brief "New"
     // state right after CreatePeerConnection(). Two onValueChanged listeners (a leftover
     // persistent one + the runtime TeleopUIController one) can both call this in the same
     // frame; starting a second peer connection would overwrite the first mid-negotiation
-    // and the connection would hang. Only restart when there is no usable pc.
-    if (pc != null &&
-        pc.ConnectionState != RTCPeerConnectionState.Closed &&
-        pc.ConnectionState != RTCPeerConnectionState.Failed)
+    // and the connection would hang. DEAD states (Closed/Failed/Disconnected) are cleaned
+    // up and restarted: previously a pc parked in Disconnected (any unclean session end —
+    // doff, WiFi loss, manager restart; libwebrtc can sit there forever without reaching
+    // Failed) silently swallowed the next Power press — the "first connect gives no
+    // control, second works" bug, because Power OFF ran the cleanup the guard skipped.
+    if (pc != null)
     {
-      Debug.LogWarning($"WebRTC already {pc.ConnectionState}; ignoring duplicate StartConnection.");
-      return;
+      var st = pc.ConnectionState;
+      if (st == RTCPeerConnectionState.Closed ||
+          st == RTCPeerConnectionState.Failed ||
+          st == RTCPeerConnectionState.Disconnected)
+      {
+        StopConnection();   // full cleanup (channels, coroutines, pc) before the fresh attempt
+      }
+      else
+      {
+        Debug.LogWarning($"WebRTC already {st}; ignoring duplicate StartConnection.");
+        return;
+      }
     }
+    _connectEpoch++;
+    _retrying = false;
     serverUrl = NormalizeServerUrl(serverUrl);
     statusText.text = "Starting WebRTC...";
-    StartCoroutine(StartWebRTC());
+    _startWebRTC = StartCoroutine(StartWebRTC());
     if (_connectWatchdog != null) StopCoroutine(_connectWatchdog);
-    _connectWatchdog = StartCoroutine(ConnectWatchdog());
+    _connectWatchdog = StartCoroutine(ConnectWatchdog(false));
   }
 
-  // Safety net: if the connection doesn't reach Connected within connectTimeoutSeconds,
-  // tear it down and notify the UI so the power button resets to "off" instead of hanging.
-  private IEnumerator ConnectWatchdog()
+  /// <summary>True when the core data channels are open — the session is genuinely usable.</summary>
+  private bool ChannelsOpen() =>
+    bodyPoseChannel   != null && bodyPoseChannel.ReadyState   == RTCDataChannelState.Open &&
+    unityStateChannel != null && unityStateChannel.ReadyState == RTCDataChannelState.Open &&
+    unityCmdsChannel  != null && unityCmdsChannel.ReadyState  == RTCDataChannelState.Open;
+
+  /// <summary>True once the session is verified usable (Connected AND core channels open).</summary>
+  public bool SessionUsable => IsConnected && ChannelsOpen();
+
+  // Safety net + session verification. Stage 1: wait for Connected (connectTimeoutSeconds).
+  // Stage 2: after Connected, verify the core data channels actually reach Open (up to 4s) —
+  // a session can be "Connected" (ICE/DTLS up) with the channels never opening, which used to
+  // present as "power lit but no neck / can't start teleop". If the first attempt isn't fully
+  // usable, tear down and silently retry ONCE (the operator never sees the bad attempt); only
+  // a failed retry resets the power button. Exits with zero steady-state cost when healthy.
+  private IEnumerator ConnectWatchdog(bool isRetry)
   {
-    yield return new WaitForSeconds(Mathf.Max(1f, connectTimeoutSeconds));
-    _connectWatchdog = null;   // clear first so StopConnection() doesn't try to stop us
-    if (!IsConnected)
+    float deadline = Time.realtimeSinceStartup + Mathf.Max(1f, connectTimeoutSeconds);
+    while (Time.realtimeSinceStartup < deadline && !IsConnected) yield return null;   // stage 1
+
+    bool healthy = false;
+    if (IsConnected)                                                                   // stage 2
     {
-      Debug.LogWarning($"[WebRTCController] Connection timed out after {connectTimeoutSeconds}s (server: {serverUrl}).");
-      if (statusText != null) statusText.text = "Connection timed out. Press to retry.";
-      StopConnection();
-      OnConnectionStateChanged?.Invoke(false);
+      float chDeadline = Time.realtimeSinceStartup + 4f;
+      while (Time.realtimeSinceStartup < chDeadline && IsConnected && !ChannelsOpen()) yield return null;
+      healthy = IsConnected && ChannelsOpen();
     }
+
+    if (healthy)
+    {
+      _retrying = false;
+      _connectWatchdog = null;
+      yield break;
+    }
+
+    if (!isRetry)
+    {
+      Debug.LogWarning("[WebRTCController] First connect attempt not usable — retrying silently.");
+      _connectWatchdog = null;    // clear FIRST so StopConnection() can't kill this coroutine
+      StopConnection();           // bumps epoch, clears _retrying
+      _retrying = true;           // set AFTER StopConnection; suppresses the power-button reset
+      if (statusText != null) statusText.text = "Retrying connection...";
+      int epoch = _connectEpoch;
+      yield return new WaitForSeconds(0.5f);
+      if (_connectEpoch != epoch) { _retrying = false; yield break; }  // operator intervened
+      _startWebRTC = StartCoroutine(StartWebRTC());
+      _connectWatchdog = StartCoroutine(ConnectWatchdog(true));
+      yield break;                // _retrying stays true until the retry watchdog decides
+    }
+
+    _retrying = false;
+    _connectWatchdog = null;
+    Debug.LogWarning($"[WebRTCController] Connection not usable after retry (server: {serverUrl}).");
+    if (statusText != null) statusText.text = "Connection failed. Press to retry.";
+    StopConnection();
+    OnConnectionStateChanged?.Invoke(false);
+  }
+
+  // One automatic reconnect after an established link hard-fails (WiFi blip, manager restart
+  // finishing). Single-shot per established session (_autoRetryUsed); never re-arms teleop.
+  private IEnumerator RetryOnce()
+  {
+    int epoch = _connectEpoch;
+    yield return new WaitForSeconds(1f);
+    if (_connectEpoch != epoch) yield break;   // operator already acted — stand down
+    Debug.LogWarning("[WebRTCController] Link failed after being established — auto-reconnecting once.");
+    StartConnection();                          // guard routes the Failed pc through StopConnection
   }
 
   public void StopConnection()
   {
+    _connectEpoch++;            // cancels any pending silent retry
+    _retrying = false;
+    _wasEstablished = false;
+    if (_startWebRTC != null) { StopCoroutine(_startWebRTC); _startWebRTC = null; }
     if (_connectWatchdog != null) { StopCoroutine(_connectWatchdog); _connectWatchdog = null; }
     if (cameraChannel != null)
     {
@@ -405,15 +501,27 @@ public void ToggleVideoStream(bool isOn)
   /// <summary>
   /// Send a JSON UI-state report to the study manager over the 'unity_state' data
   /// channel (Unity → server). Used by <see cref="UnityCommandReceiver"/> to mirror
-  /// in-VR toggle changes back to the manager's button UI. No-op (drops) if the
-  /// channel is not open yet.
+  /// in-VR toggle changes back to the manager's button UI. Returns true only when the
+  /// message was actually handed to an OPEN channel — callers that must not lose their
+  /// report (e.g. the unity_ready announce) retry until this succeeds; fire-and-forget
+  /// callers can ignore the result (drops silently when the channel isn't open).
   /// </summary>
-  public void SendUnityState(string json)
+  public bool SendUnityState(string json)
   {
     if (unityStateChannel != null && unityStateChannel.ReadyState == RTCDataChannelState.Open)
     {
-      unityStateChannel.Send(System.Text.Encoding.UTF8.GetBytes(json));
+      try
+      {
+        unityStateChannel.Send(System.Text.Encoding.UTF8.GetBytes(json));
+        return true;
+      }
+      catch (System.Exception e)
+      {
+        Debug.LogWarning($"[WebRTCController] unity_state send failed: {e.Message}");
+        return false;
+      }
     }
+    return false;
   }
 
   private void OnAprilTagsDetected(QuestAprilTagTracker.TagResult[] tags)
@@ -522,10 +630,22 @@ public void ToggleVideoStream(bool isOn)
       yield break;
     }
 
+    // This signaling is single-shot (one POST, answer in the response — NO trickle ICE), and
+    // aiortc cannot form check pairs from a candidate-less offer (it would have to wait for
+    // peer-reflexive discovery). So wait (bounded) for ICE gathering and POST the LIVE local
+    // description, which includes the gathered host candidates. With STUN off (LAN default)
+    // gathering completes in tens of ms; the 1.5s cap bounds any pathological case.
+    float gatherEnd = Time.realtimeSinceStartup + 1.5f;
+    while (pc.GatheringState != RTCIceGatheringState.Complete && Time.realtimeSinceStartup < gatherEnd)
+      yield return null;
+    string offerSdp;
+    try { offerSdp = pc.LocalDescription.sdp; }                        // includes gathered candidates
+    catch (System.InvalidOperationException) { offerSdp = desc.sdp; }  // fallback == pre-gather offer
+
     // Send offer to server
     statusText.text = $"Sending offer to {serverUrl}...";
     Debug.Log($"[WebRTCController] Initiating WebRTC signaling to URL: {serverUrl}");
-    SignalingMessage offerMessage = new SignalingMessage { type = "offer", sdp = desc.sdp };
+    SignalingMessage offerMessage = new SignalingMessage { type = "offer", sdp = offerSdp };
     string jsonOffer = JsonUtility.ToJson(offerMessage);
 
     using (UnityWebRequest www = new UnityWebRequest(serverUrl, "POST"))
@@ -534,8 +654,9 @@ public void ToggleVideoStream(bool isOn)
       www.uploadHandler = new UploadHandlerRaw(bodyRaw);
       www.downloadHandler = new DownloadHandlerBuffer();
       www.SetRequestHeader("Content-Type", "application/json");
-      // Bounded so an unreachable/wrong server can't hang the offer POST forever.
-      www.timeout = Mathf.Max(1, Mathf.CeilToInt(connectTimeoutSeconds));
+      // Bounded so an unreachable/wrong server can't hang the offer POST forever. Kept BELOW
+      // the watchdog window (0.7x) so a stage-1 retry can never overlap a still-live POST.
+      www.timeout = Mathf.Max(1, Mathf.CeilToInt(connectTimeoutSeconds * 0.7f));
 
       yield return www.SendWebRequest();
 
@@ -549,7 +670,9 @@ public void ToggleVideoStream(bool isOn)
       statusText.text = "Offer sent, waiting for answer...";
       string jsonAnswer = www.downloadHandler.text;
       SignalingMessage answerMessage = JsonUtility.FromJson<SignalingMessage>(jsonAnswer);
-      StartCoroutine(OnGotAnswer(answerMessage.sdp));
+      // Inlined (not a detached StartCoroutine) so stopping _startWebRTC also stops the
+      // answer application — a stale answer must never touch a newer attempt's pc.
+      yield return OnGotAnswer(answerMessage.sdp);
     }
   }
 
@@ -567,7 +690,10 @@ public void ToggleVideoStream(bool isOn)
         UnityMainThreadDispatcher.Instance().Enqueue(() =>
             {
               statusText.text = "Peers connected!";
-              if (_connectWatchdog != null) { StopCoroutine(_connectWatchdog); _connectWatchdog = null; }
+              // NOTE: the watchdog is deliberately NOT stopped here — it continues into its
+              // channels-open verification stage and self-terminates once the session is usable.
+              _wasEstablished = true;
+              _autoRetryUsed = false;
               OnConnectionStateChanged?.Invoke(true);
             });
       }
@@ -579,7 +705,19 @@ public void ToggleVideoStream(bool isOn)
         _teleopActive = false;
         UnityMainThreadDispatcher.Instance().Enqueue(() =>
             {
-              OnConnectionStateChanged?.Invoke(false);
+              // Suppress the UI reset while the watchdog's silent retry is tearing down the
+              // bad first attempt (the retry's own Closed event would flicker the power button).
+              if (!_retrying) OnConnectionStateChanged?.Invoke(false);
+              // A previously-established link that hard-FAILS gets ONE automatic reconnect.
+              // Failed only — never Disconnected, which libwebrtc often self-heals in 2-5s and
+              // a teardown would kill that recovery. Teleop stays off until the operator
+              // presses Play again (_teleopActive was already forced false above), so the
+              // robot can never re-engage without operator intent.
+              if (state == RTCPeerConnectionState.Failed && _wasEstablished && !_autoRetryUsed && !_retrying)
+              {
+                _autoRetryUsed = true;
+                StartCoroutine(RetryOnce());
+              }
             });
       }
     };
@@ -670,6 +808,7 @@ public void ToggleVideoStream(bool isOn)
 
   private IEnumerator OnGotAnswer(string sdp)
   {
+    if (pc == null) yield break;   // attempt was torn down while the answer was in flight
     var remoteDesc = new RTCSessionDescription { type = RTCSdpType.Answer, sdp = sdp };
     var remoteDescOp = pc.SetRemoteDescription(ref remoteDesc);
     yield return remoteDescOp;
@@ -748,9 +887,16 @@ public void ToggleVideoStream(bool isOn)
       // streams, so the robot holds its last pose (freeze). The manager only runs full-body IK
       // while teleop is active; with neck-only it just tracks the head bone. Also gate on new
       // data and an uncongested buffer to keep latency low.
-      if ((_teleopActive || _neckActive) && dataToSend != null && bodyPoseChannel.BufferedAmount < HIGH_WATER_MARK)
+      // ReadyState guard + try/catch: RTCDataChannel.Send THROWS on a non-open channel, and an
+      // unhandled throw kills this coroutine permanently (the handle stays non-null so OnOpen
+      // won't restart it) — "connected but no neck/teleop" after any channel blip. The guard is
+      // one native enum read per pending tick; the try/catch is free on the non-throw path.
+      if ((_teleopActive || _neckActive) && dataToSend != null &&
+          bodyPoseChannel != null && bodyPoseChannel.ReadyState == RTCDataChannelState.Open &&
+          bodyPoseChannel.BufferedAmount < HIGH_WATER_MARK)
       {
-        bodyPoseChannel.Send(dataToSend);
+        try { bodyPoseChannel.Send(dataToSend); }
+        catch (System.Exception e) { Debug.LogWarning($"[WebRTCController] body_pose send failed: {e.Message}"); }
       }
       // If the buffer is full or there's no new data, we effectively "drop" the frame,
       // prioritizing low latency and sending the most recent data in the next cycle.
@@ -831,11 +977,35 @@ public void ToggleVideoStream(bool isOn)
     StopConnection();
   }
 
-  private static RTCConfiguration GetSelectedSdpSemantics()
+  // Robot-safety gate: taking the headset off (or any OS pause — system menu, app switch)
+  // pauses teleop and tells the manager, so re-donning can NEVER resume pose streaming until
+  // the operator explicitly presses Play (which resumes via the manager's existing blend).
+  // Without this, _teleopActive stayed true across a doff and the pose stream snapped back on
+  // re-don, sweeping the robot to wherever the operator's arms happened to be. If the report
+  // doesn't flush before the OS suspends us, the manager's stale-pose guard still HOLDs.
+  private void OnApplicationPause(bool paused)
   {
-    return new RTCConfiguration
+    if (paused && _teleopActive)
     {
-      iceServers = new[] { new RTCIceServer { urls = new[] { "stun:stun.l.google.com:19302" } } }
-    };
+      SetTeleopActive(false);
+      SendUnityState("{\"type\":\"unity_state\",\"command\":\"teleop_active\",\"enabled\":false}");
+      Debug.Log("[WebRTCController] App paused (headset doffed?) — teleop paused for safety.");
+    }
+  }
+
+  private RTCConfiguration GetSelectedSdpSemantics()
+  {
+    // LAN default: NO ICE servers. Google STUN on a LAN-only robot network adds a cold
+    // DNS+STUN stall of up to several seconds to the FIRST connect of a session (the
+    // "first connect fails, second works" signature) and host candidates are all that is
+    // needed on a single-hop network. Flip useStun in the Inspector for NAT deployments.
+    if (useStun)
+    {
+      return new RTCConfiguration
+      {
+        iceServers = new[] { new RTCIceServer { urls = new[] { "stun:stun.l.google.com:19302" } } }
+      };
+    }
+    return new RTCConfiguration { iceServers = new RTCIceServer[0] };
   }
 }

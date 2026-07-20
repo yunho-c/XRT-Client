@@ -56,6 +56,10 @@ Shader "Custom/ZEDStereoPassthrough"
         _BlurEdgeStart ("Blur Edge Start (0=center..1=edge)", Range(0,1)) = 0.78
         _BlurStrength  ("Blur Strength (0..1)",               Range(0,1)) = 1.0
         _BlurRadius    ("Blur Radius (uv)",                   Float)      = 0.008
+
+        // Letterbox: when 1, the FOV-remapped periphery (UV that fell outside the source image) is
+        // painted opaque BLACK instead of the default clamped edge-pixel extension. 0 = edge-fill.
+        _BlackOutside  ("Black Outside (letterbox)",          Float)      = 0.0
     }
 
     SubShader
@@ -119,6 +123,7 @@ Shader "Custom/ZEDStereoPassthrough"
                 float  _BlurEdgeStart;
                 float  _BlurStrength;
                 float  _BlurRadius;
+                float  _BlackOutside;
             CBUFFER_END
 
             // Edge blur: an 8-tap ring blended in by `weight` (0 = sharp center sample). Taps are
@@ -185,6 +190,10 @@ Shader "Custom/ZEDStereoPassthrough"
                 float converge = _IPDShift + _ZoomConvergence * (_UserZoom - 1.0);
                 uv.x += converge * eyeSign;
 
+                // Periphery test (BEFORE the clamp): true where the FOV/zoom remap sampled beyond
+                // the source image. Used by the black-outside (letterbox) mode below.
+                bool outside = (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0);
+
                 uv = saturate(uv);
 
                 // Single stitched stereo stream: the two eye images are the two halves of _Left. Sample
@@ -202,6 +211,7 @@ Shader "Custom/ZEDStereoPassthrough"
                 float2 edgeXY = abs(IN.uv - 0.5) * 2.0;     // 0 at center -> 1 at each screen edge
                 float edgeWeight = smoothstep(_BlurEdgeStart, 1.0, max(edgeXY.x, edgeXY.y)) * _BlurStrength;
 
+                half4 col;
                 if (_SBS > 0.5)
                 {
                     bool sbsHoriz = (_SBS < 2.5);
@@ -221,14 +231,20 @@ Shader "Custom/ZEDStereoPassthrough"
                     float2 sUv = useFirst ? uvFirst : uvSecond;
                     float2 sLo = useFirst ? loFirst : loSecond;
                     float2 sHi = useFirst ? hiFirst : hiSecond;
-                    return SampleEdgeBlurred(TEXTURE2D_ARGS(_Left, sampler_Left), sUv, sLo, sHi, edgeWeight);
+                    col = SampleEdgeBlurred(TEXTURE2D_ARGS(_Left, sampler_Left), sUv, sLo, sHi, edgeWeight);
                 }
-
                 // Dual: ZED camera orientation is mirrored vs headset eye layout, so eye 0 -> _Right,
                 // eye 1 -> _Left (identical to the old lerp(R, L, eyeIndex)).
-                if (unity_StereoEyeIndex == 0)
-                    return SampleEdgeBlurred(TEXTURE2D_ARGS(_Right, sampler_Right), uv, float2(0.0, 0.0), float2(1.0, 1.0), edgeWeight);
-                return SampleEdgeBlurred(TEXTURE2D_ARGS(_Left, sampler_Left), uv, float2(0.0, 0.0), float2(1.0, 1.0), edgeWeight);
+                else if (unity_StereoEyeIndex == 0)
+                    col = SampleEdgeBlurred(TEXTURE2D_ARGS(_Right, sampler_Right), uv, float2(0.0, 0.0), float2(1.0, 1.0), edgeWeight);
+                else
+                    col = SampleEdgeBlurred(TEXTURE2D_ARGS(_Left, sampler_Left), uv, float2(0.0, 0.0), float2(1.0, 1.0), edgeWeight);
+
+                // Letterbox mode: paint the FOV-remapped periphery opaque black instead of the
+                // default clamped edge-pixel extension.
+                if (_BlackOutside > 0.5 && outside)
+                    col.rgb = half3(0.0, 0.0, 0.0);
+                return col;
             }
             ENDHLSL
         }

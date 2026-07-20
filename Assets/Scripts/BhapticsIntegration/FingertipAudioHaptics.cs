@@ -3,14 +3,26 @@ using UnityEngine;
 /// <summary>
 /// Glass-armonica fingertip audio — an alternative to vibrotactile haptic gloves.
 ///
-/// Each finger maps to a distinct note tuned in perfect-5th steps (~7 semitones),
-/// giving a 2.3-octave span per hand with unmistakably different tones per finger.
+/// Both hands are MIRRORED — the same note on the same finger of each hand — laid out on a
+/// UNIFORM PERFECT-FIFTH ladder: every adjacent pad is exactly one perfect fifth (7 semitones,
+/// 700 cents, frequency ratio ≈3:2) above the previous. One-sentence-explainable spacing, wide
+/// enough to survive tone-deafness (amusia mostly impairs sub-2-semitone discrimination), and
+/// stacked fifths stay consonant when several pads fire at once:
 ///
-///   Left  (low) — Palm:G2  Little:D3  Ring:A3  Middle:E4  Index:B4  Thumb:F#5
-///   Right (high) — Palm:C#4  Thumb:G#4  Index:D#5  Middle:A#5  Ring:F6  Little:C7
+///   Palm:C3 (lowest — the root)  Thumb:G3  Index:D4  Middle:A4  Ring:E5  Little:B5 (highest)
+///
+/// TIMBRE CODING doubles the per-finger identity for tone-deaf listeners (timbre perception is
+/// normal in amusia): the palm is the darkest, nearly pure sine, and each pad up the ladder is
+/// progressively BRIGHTER (more 2nd/3rd harmonic) up to the little finger — same bell envelope
+/// and vibrato throughout, so the overall sound profile is unchanged.
+///
+/// WHICH HAND you hear is carried by the 3D spatialization (each finger/palm sound is emitted
+/// from the hand's position — see the spatial modes below), while per-finger pitch + brightness
+/// identify the finger. Both hands play the same notes, so hand identity comes from direction.
 ///
 /// SOUND DESIGN — Smooth, round, Quest-startup-like character
-///   Nearly pure sine (fundamental + very subtle octave harmonic ≈ 0.02).
+///   Nearly pure sine at the palm (fundamental + subtle octave harmonic); higher pads blend in
+///   progressively more 2nd/3rd harmonic (the timbre ramp) while keeping the same envelope.
 ///   Envelope: smooth sine-rise → cosine-fall (a half-sine bell shape). Both
 ///   slopes are zero at the peak — no kink, no click. Quick and clean (~0.17 s).
 ///   Post-attack vibrato fades in gradually (~0.10 s) so the onset stays pure.
@@ -44,29 +56,22 @@ using UnityEngine;
 /// </summary>
 public class FingertipAudioHaptics : MonoBehaviour
 {
-    // ── Note frequencies (Hz) — perfect-5th steps ────────────────────────────
+    // ── Note frequencies (Hz) — uniform perfect-fifth ladder, IDENTICAL on both hands ──────
     // Slot order: [0]=thumb [1]=index [2]=middle [3]=ring [4]=little [5]=palm
-
-    // Left — P5 steps from D3 (little=low → thumb=high). Palm=G2 (P5 below D3).
-    private static readonly float[] LEFT_FREQ =
+    // UNIFORM SPACING: every adjacent pad (palm → thumb → index → middle → ring → little) is
+    // exactly ONE PERFECT FIFTH (7 semitones, 700 cents, frequency ratio ≈3:2) above the
+    // previous — i.e. f(n) = 130.81 Hz × 2^(7n/12) for n = 0..5. The uniform 7-semitone step
+    // is far above amusia's discrimination limit (~2 semitones), and stacked fifths remain
+    // consonant when several pads sound at once. The per-finger brightness ramp
+    // (GenerateClips) doubles the identity cue. Hand identity comes from 3D spatialization.
+    private static readonly float[] FREQ =
     {
-        739.99f,  // [0] Thumb  → F#5
-        493.88f,  // [1] Index  → B4
-        329.63f,  // [2] Middle → E4
-        220.00f,  // [3] Ring   → A3
-        146.83f,  // [4] Little → D3
-         98.00f,  // [5] Palm   → G2  (deep body contact)
-    };
-
-    // Right — P5 steps from G#4 (thumb=low → little=high). Palm=C#4 (P5 below G#4).
-    private static readonly float[] RIGHT_FREQ =
-    {
-        415.30f,  // [0] Thumb  → G#4
-        622.25f,  // [1] Index  → D#5
-        932.33f,  // [2] Middle → A#5
-       1396.91f,  // [3] Ring   → F6
-       2093.00f,  // [4] Little → C7  (bright crystal — glass armonica soprano)
-        277.18f,  // [5] Palm   → C#4 (body contact, below finger range)
+        196.00f,  // [0] Thumb  → G3  (low — one fifth above the palm)
+        293.66f,  // [1] Index  → D4
+        440.00f,  // [2] Middle → A4
+        659.26f,  // [3] Ring   → E5
+        987.77f,  // [4] Little → B5  (highest)
+        130.81f,  // [5] Palm   → C3  (lowest — the root)
     };
 
     // ── Inspector ─────────────────────────────────────────────────────────────
@@ -122,8 +127,19 @@ public class FingertipAudioHaptics : MonoBehaviour
     [Range(0f, 0.02f)]    public float vibratoDepth  = 0.003f;
     [Tooltip("Time after attack peak for vibrato to reach full depth (organic fade-in).")]
     [Range(0f, 0.4f)]     public float vibratoFadeIn = 0.10f;
-    [Tooltip("2nd harmonic amplitude (octave above fundamental). Keep low for purity.")]
+    [Tooltip("2nd harmonic amplitude (octave above fundamental) at the DARKEST pad (the palm). " +
+             "Keep low for purity — the palm stays the nearly pure sine reference tone.")]
     [Range(0f, 0.20f)]    public float harmonic2Gain = 0.02f;
+
+    [Header("Timbre Coding — per-finger brightness ramp  (Play Mode restart required)")]
+    [Tooltip("Tone-deaf-friendly finger identity: timbre perception is unaffected by amusia, so " +
+             "each pad up the ladder sounds progressively BRIGHTER — palm = darkest (uses " +
+             "'Harmonic2 Gain' above), little finger = brightest. This is the 2nd-harmonic gain " +
+             "AT THE BRIGHTEST pad; pads in between interpolate. Same envelope/vibrato throughout.")]
+    [Range(0f, 0.6f)]     public float brightHarmonic2Gain = 0.35f;
+    [Tooltip("3rd-harmonic (perfect 12th) gain at the BRIGHTEST pad — adds shimmer/edge without " +
+             "changing the bell character. 0 at the palm; pads in between interpolate.")]
+    [Range(0f, 0.4f)]     public float brightHarmonic3Gain = 0.20f;
 
     [Header("Force Thresholds  (keep in sync with WebRTCHapticReceiver)")]
     [Range(0f, 0.2f)] public float sensorFloor   = 0.05f;
@@ -212,10 +228,10 @@ public class FingertipAudioHaptics : MonoBehaviour
     // ── Runtime state ─────────────────────────────────────────────────────────
     private AudioSource[] _leftSrc,  _rightSrc;
 
-    // Forward clips for press (upward) transitions.
-    private AudioClip[] _leftClipFwd,  _rightClipFwd;
-    // Reversed clips for release (downward) transitions — sample data flipped.
-    private AudioClip[] _leftClipRev,  _rightClipRev;
+    // Forward clips for press (upward) transitions, reversed clips for release (downward).
+    // SHARED by both hands — the hands are mirrored (same note per finger), played through
+    // per-hand AudioSources so spatial position stays per hand.
+    private AudioClip[] _clipFwd, _clipRev;
 
     private enum ForceLevel { None, Light, Medium, High, Maximum }
     private readonly ForceLevel[] _leftLevel     = new ForceLevel[FINGER_COUNT];
@@ -228,15 +244,13 @@ public class FingertipAudioHaptics : MonoBehaviour
     // ── Lifecycle ─────────────────────────────────────────────────────────────
     void Start()
     {
-        _leftClipFwd  = GenerateClips(LEFT_FREQ);
-        _leftClipRev  = ReverseClips(_leftClipFwd);
-        _rightClipFwd = GenerateClips(RIGHT_FREQ);
-        _rightClipRev = ReverseClips(_rightClipFwd);
+        _clipFwd = GenerateClips(FREQ);
+        _clipRev = ReverseClips(_clipFwd);
 
         // AudioSources are owned by this component (positioned each frame in LateUpdate),
         // so the same sources serve both hand-located and head-spatial modes.
-        _leftSrc  = BuildSources("L", _leftClipFwd);
-        _rightSrc = BuildSources("R", _rightClipFwd);
+        _leftSrc  = BuildSources(true,  _clipFwd);
+        _rightSrc = BuildSources(false, _clipFwd);
 
         // Place them once so the very first note isn't emitted from the origin.
         UpdateSourcePositions();
@@ -251,8 +265,8 @@ public class FingertipAudioHaptics : MonoBehaviour
 
     void OnDestroy()
     {
-        DestroyClips(_leftClipFwd);  DestroyClips(_leftClipRev);
-        DestroyClips(_rightClipFwd); DestroyClips(_rightClipRev);
+        DestroyClips(_clipFwd);
+        DestroyClips(_clipRev);
     }
 
     // ── Public API ────────────────────────────────────────────────────────────
@@ -261,8 +275,8 @@ public class FingertipAudioHaptics : MonoBehaviour
         AudioSource[] srcs     = isLeft ? _leftSrc      : _rightSrc;
         ForceLevel[]  levels   = isLeft ? _leftLevel    : _rightLevel;
         float[]       smoothed = isLeft ? _leftSmoothed : _rightSmoothed;
-        AudioClip[]   fwdClips = isLeft ? _leftClipFwd  : _rightClipFwd;
-        AudioClip[]   revClips = isLeft ? _leftClipRev  : _rightClipRev;
+        AudioClip[]   fwdClips = _clipFwd;   // mirrored hands: same notes both sides
+        AudioClip[]   revClips = _clipRev;
 
         for (int i = 0; i < FINGER_COUNT; i++)
         {
@@ -305,7 +319,14 @@ public class FingertipAudioHaptics : MonoBehaviour
     // Envelope: sine-rise (0→peak) then cosine-fall (peak→0).
     // Both slopes are zero at the peak — no kink, no click.
     // Vibrato fades in gradually after the peak so the onset stays pure.
-    // Nearly pure sine (fundamental + very subtle octave harmonic).
+    // TIMBRE RAMP: the palm is the darkest, nearly pure sine; each pad up the ladder blends in
+    // progressively more 2nd + 3rd harmonic (brightness), so fingers differ in TIMBRE as well
+    // as pitch — a cue that survives tone-deafness. Envelope/vibrato identical for every pad.
+
+    // Brightness fraction per slot: palm(5)=0 (darkest) → thumb(0)=0.2 → … → little(4)=1.
+    // Follows the pitch order (palm lowest … little highest) so brighter always means higher.
+    private static float BrightnessFrac(int slot) => slot == 5 ? 0f : (slot + 1) / 5f;
+
     AudioClip[] GenerateClips(float[] freqs)
     {
         // Hard-cap total note length. If attack+release exceeds the ceiling, scale both
@@ -330,9 +351,16 @@ public class FingertipAudioHaptics : MonoBehaviour
         {
             float f    = freqs[fi];
             float inc1 = TWO_PI * f       / SAMPLE_RATE; // fundamental
-            float inc2 = TWO_PI * f * 2f  / SAMPLE_RATE; // octave harmonic
+            float inc2 = TWO_PI * f * 2f  / SAMPLE_RATE; // 2nd harmonic (octave)
+            float inc3 = TWO_PI * f * 3f  / SAMPLE_RATE; // 3rd harmonic (perfect 12th)
 
-            float ph1 = 0f, ph2 = 0f, phV = 0f;
+            // Per-pad brightness: interpolate the harmonic gains from the palm's near-pure
+            // sine up to the little finger's brightest blend.
+            float bright = BrightnessFrac(fi);
+            float h2 = Mathf.Lerp(harmonic2Gain, brightHarmonic2Gain, bright);
+            float h3 = brightHarmonic3Gain * bright;
+
+            float ph1 = 0f, ph2 = 0f, ph3 = 0f, phV = 0f;
             var   data = new float[frames];
 
             for (int s = 0; s < frames; s++)
@@ -364,11 +392,12 @@ public class FingertipAudioHaptics : MonoBehaviour
                 phV += vibratoInc;
                 if (phV >= TWO_PI) phV -= TWO_PI;
 
-                // ── Oscillator — nearly pure sine ───────────────────────────
-                data[s] = (FastSin(ph1) + harmonic2Gain * FastSin(ph2)) * amp;
+                // ── Oscillator — sine + per-pad brightness harmonics ────────
+                data[s] = (FastSin(ph1) + h2 * FastSin(ph2) + h3 * FastSin(ph3)) * amp;
 
                 ph1 += inc1 * vibMod; if (ph1 >= TWO_PI) ph1 -= TWO_PI;
                 ph2 += inc2 * vibMod; if (ph2 >= TWO_PI) ph2 -= TWO_PI;
+                ph3 += inc3 * vibMod; if (ph3 >= TWO_PI) ph3 -= TWO_PI;
             }
 
             // Normalise to [-1, 1]
@@ -411,9 +440,10 @@ public class FingertipAudioHaptics : MonoBehaviour
     // Sources are parented to this component (NOT the hand bones). Their world position is
     // driven each frame by UpdateSourcePositions() so one set of sources can be hand-located,
     // head-spatial, or any blend of the two.
-    AudioSource[] BuildSources(string side, AudioClip[] clips)
+    AudioSource[] BuildSources(bool isLeft, AudioClip[] clips)
     {
         var      srcs = new AudioSource[FINGER_COUNT];
+        string   side = isLeft ? "L" : "R";
         string[] lbl  = { "Thumb", "Index", "Middle", "Ring", "Little", "Palm" };
 
         for (int i = 0; i < FINGER_COUNT; i++)

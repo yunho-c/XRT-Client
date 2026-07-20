@@ -26,7 +26,15 @@ public class TeleopVisualsController : MonoBehaviour
     public GameObject[] avatarVisuals;
 
     [Tooltip("Show the avatar (ghost outline) while teleoperating (menu closed). Driven by the settings toggle.")]
-    public bool showAvatarDuringTeleop = true;
+    public bool showAvatarDuringTeleop = false;   // DEFAULT OFF (avatar overlay hidden during teleop).
+
+    const string PP_AVATAR = "teleopShowAvatar";
+
+    void Awake()
+    {
+        // Restore the operator's avatar-visibility choice across app reboots.
+        showAvatarDuringTeleop = PlayerPrefs.GetInt(PP_AVATAR, showAvatarDuringTeleop ? 1 : 0) == 1;
+    }
 
     void OnEnable() { Apply(); }
     void Update()   { Apply(); }
@@ -53,6 +61,8 @@ public class TeleopVisualsController : MonoBehaviour
     public void SetShowAvatarDuringTeleop(bool show)
     {
         showAvatarDuringTeleop = show;
+        PlayerPrefs.SetInt(PP_AVATAR, show ? 1 : 0);   // save the choice across reboots
+        PlayerPrefs.Save();
         Apply();
     }
 }

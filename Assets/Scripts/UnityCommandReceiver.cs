@@ -141,11 +141,15 @@ public class UnityCommandReceiver : MonoBehaviour
         // connecting (and sync the in-VR toggle UI). Fires once per (re)connection.
         if (_announceReady)
         {
-            _announceReady = false;
             // Baseline the display-state report to the current value so the manager's authoritative
-            // connect-time push (which may change it) isn't pre-empted by a stale report.
+            // connect-time push (which may change it) isn't pre-empted by a stale report. Clear the
+            // flag ONLY when the announce actually went out over an open unity_state channel —
+            // clearing on a dropped send is how unity_ready used to be lost on every connect.
             if (stereoReceiver != null) _lastReportedDisplayVisible = stereoReceiver.videoStreamVisible;
-            webRTCController.SendUnityState("{\"type\":\"unity_state\",\"command\":\"unity_ready\"}");
+            if (webRTCController.SendUnityState("{\"type\":\"unity_state\",\"command\":\"unity_ready\"}"))
+            {
+                _announceReady = false;
+            }
         }
 
         // Keep WebRTCController's neck gate in sync with the actual stereo streaming state, so
@@ -246,9 +250,13 @@ public class UnityCommandReceiver : MonoBehaviour
         // states (incl. streaming) to overwrite the XR app, so Unity does NOT report its own
         // state up at connect time (that would fight the manager's push). Runtime operator
         // changes are still mirrored back via the reverse 'unity_state' reports below.
-        // Announce readiness (from Update, on the main thread) so the manager pushes its
-        // authoritative state now that this channel is open.
-        _announceReady = true;
+        // Announce readiness once this channel actually OPENS (this method runs at channel
+        // CREATION, before the offer is even POSTed — arming the flag here directly meant
+        // Update() consumed it while unity_state was still closed and the announce was ALWAYS
+        // silently dropped; the manager's state push then survived only via its timer fallbacks).
+        // Update() additionally retries the send until it actually goes out (see SendUnityState).
+        if (channel.ReadyState == RTCDataChannelState.Open) _announceReady = true;
+        else channel.OnOpen = () => { _announceReady = true; };
     }
 
     /// <summary>
@@ -271,13 +279,15 @@ public class UnityCommandReceiver : MonoBehaviour
         if (stereoReceiver != null)
         {
             stereoReceiver.ToggleVideoStream(show);
-            // Showing should always yield a LIVE canvas: if the WHEP feed isn't up (e.g. it was never
-            // auto-started, or an error dropped it), connect it. Hiding keeps the connection up so a
-            // re-show is instant and low-latency — it never tears the peer down (that's the in-VR
-            // Streaming Connection button's job), which is what made the old toggle fragile.
-            if (show && !stereoReceiver.IsStreamingActive)
+            // Showing should always yield a LIVE canvas. EnsureLiveStream (not an IsStreamingActive
+            // gate): after a spontaneous drop the pc sits in Disconnected with isConnecting latched,
+            // which made IsStreamingActive read true and permanently skipped the reconnect — the
+            // "manager FPV button does nothing" bug. EnsureLiveStream is idempotent on a live or
+            // freshly-negotiating feed and recovers hung/dead ones. Hiding keeps the connection up
+            // so a re-show is instant and low-latency.
+            if (show)
             {
-                stereoReceiver.StartStream();
+                stereoReceiver.EnsureLiveStream();
             }
         }
         else if (webRTCController != null)
@@ -342,12 +352,14 @@ public class UnityCommandReceiver : MonoBehaviour
         {
             stereoReceiver.ToggleVideoStream(true);                                  // open the display
             if (streamingDisplayToggle != null) streamingDisplayToggle.SetIsOnWithoutNotify(true);
-            if (!stereoReceiver.IsStreamingActive) stereoReceiver.StartStream();     // connect if needed
+            stereoReceiver.EnsureLiveStream();   // idempotent on live/negotiating; recovers hung/dead
         }
         else
         {
-            if (stereoReceiver.IsStreamingActive)                                    // disconnect if active
-                stereoReceiver.CancelConnection("Disconnected by study manager.");
+            // Unconditional: CancelConnection clears the supervisor's streaming intent, so an
+            // explicit manager disconnect always stops the auto-reconnect loop even when the
+            // feed is between retry attempts (IsStreamingActive false).
+            stereoReceiver.CancelConnection("Disconnected by study manager.");
             stereoReceiver.ToggleVideoStream(false);                                 // close the display
             if (streamingDisplayToggle != null) streamingDisplayToggle.SetIsOnWithoutNotify(false);
         }
