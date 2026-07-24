@@ -89,6 +89,11 @@ public class WebRTCController : MonoBehaviour
   // Auto-reconnect state: only a link that WAS established auto-retries (once) on Failed.
   private bool _wasEstablished = false;
   private bool _autoRetryUsed = false;
+  // Set when a safety pause (headset doff / OS pause) must be reported to the manager; retried
+  // from Update() until the unity_state send actually succeeds, so the manager's teleop state
+  // can never silently stay "running" after a doff. Cleared on StopConnection (a fresh session
+  // always starts paused) and superseded by any explicit teleop re-engage.
+  private bool _pendingTeleopPauseReport = false;
 
   // Teleop gate: the WebRTC connection (power button) can be up while teleop is paused.
   // Body pose is only streamed to the server while _teleopActive is true (driven by the
@@ -218,6 +223,11 @@ public class WebRTCController : MonoBehaviour
       aprilTagTracker.OnTagsDetected += OnAprilTagsDetected;
     }
     // #endif
+    // Doff safety: the proximity sensor's HMDUnmounted fires the moment the headset comes off,
+    // while the app is STILL RUNNING — so the pause + manager report go out reliably, before
+    // any OS pause can freeze us (OnApplicationPause below remains the backstop).
+    OVRManager.HMDUnmounted += OnHmdUnmounted;
+    OVRManager.HMDMounted   += OnHmdMounted;
   }
 
   void OnDisable()
@@ -237,10 +247,16 @@ public class WebRTCController : MonoBehaviour
       _sendBodyPoseCoroutine = null;
     }
     // #endif
+    OVRManager.HMDUnmounted -= OnHmdUnmounted;
+    OVRManager.HMDMounted   -= OnHmdMounted;
   }
 
   void Update()
   {
+    // Doff-safety report retry: a single cheap bool check per frame; only does work while a
+    // safety-pause report is still undelivered (e.g. the doff raced a channel hiccup).
+    TryFlushTeleopPauseReport();
+
     if (cameraChannel != null && cameraChannel.ReadyState == RTCDataChannelState.Open)
     {
       SendOrientation();
@@ -389,6 +405,9 @@ public class WebRTCController : MonoBehaviour
     _connectEpoch++;            // cancels any pending silent retry
     _retrying = false;
     _wasEstablished = false;
+    // Drop any undelivered doff-pause report: a fresh session always starts paused, and a
+    // stale report flushed after a later reconnect would wrongly pause a re-engaged teleop.
+    _pendingTeleopPauseReport = false;
     if (_startWebRTC != null) { StopCoroutine(_startWebRTC); _startWebRTC = null; }
     if (_connectWatchdog != null) { StopCoroutine(_connectWatchdog); _connectWatchdog = null; }
     if (cameraChannel != null)
@@ -444,6 +463,10 @@ public class WebRTCController : MonoBehaviour
       return;
     }
     _teleopActive = active;
+    // An explicit (re)engage supersedes any still-unsent doff-pause report — without this, a
+    // report that raced a channel hiccup could flush AFTER the operator resumed from the
+    // manager and wrongly pause the fresh session.
+    if (active) _pendingTeleopPauseReport = false;
     ApplyPerfState();
     Debug.Log($"[WebRTCController] Teleop {(active ? "started" : "paused")}.");
   }
@@ -578,25 +601,33 @@ public void ToggleVideoStream(bool isOn)
     aprilTagChannel = pc.CreateDataChannel("apriltag_pose", bodyPoseChannelOptions);
     SetupDataChannelEvents(aprilTagChannel);
 
-    // Reverse UI-state channel (Unity → study manager). Reliable/ordered (default
-    // options) because these are discrete one-shot toggle reports that must not be
-    // dropped — the manager mirrors them onto its button UI. Client-created so the
-    // server picks it up via its 'unity_state' datachannel handler (same pattern as
-    // body_pose / apriltag_pose).
-    unityStateChannel = pc.CreateDataChannel("unity_state");
+    // Reverse UI-state channel (Unity → study manager). RELIABLE + UNORDERED: these are
+    // discrete one-shot toggle/teleop reports that must not be dropped (the manager mirrors
+    // them onto its button UI), but each message is independent — unordered delivery lets a
+    // retransmitted packet arrive late WITHOUT stalling every later message behind it
+    // (no SCTP head-of-line blocking on WiFi loss). Client-created so the server picks it
+    // up via its 'unity_state' datachannel handler (same pattern as body_pose).
+    var reliableUnordered = new RTCDataChannelInit() { ordered = false };   // maxRetransmits unset = reliable
+    unityStateChannel = pc.CreateDataChannel("unity_state", reliableUnordered);
     SetupDataChannelEvents(unityStateChannel);
 
     // Manager→XR control channels, CLIENT-created here so they ride the offer's SCTP section and use
     // the proven offerer-opens-channel path (answerer/server-opened channels don't reliably reach
     // Unity's libwebrtc — this is why these previously never applied). The study manager keeps sending
-    // on them unchanged. haptics is unreliable/unordered (avoid head-of-line blocking → low haptic
-    // latency); unity_cmds and motor_stats are reliable/ordered. Route each to its receiver exactly as
-    // the old OnDataChannel switch did, but with an inactive-inclusive search — MotorStatsReceiver
-    // lives on an inactive GameObject, so a plain FindObjectOfType would miss it.
-    var hapticsChannelOptions = new RTCDataChannelInit() { ordered = false, maxRetransmits = 0 };
-    hapticsChannel = pc.CreateDataChannel("haptics", hapticsChannelOptions);
-    unityCmdsChannel = pc.CreateDataChannel("unity_cmds");
-    motorStatsChannel = pc.CreateDataChannel("motor_stats");
+    // on them unchanged. Reliability per channel (all avoid SCTP head-of-line blocking on WiFi loss):
+    //   haptics     — UNRELIABLE + unordered: fire-and-forget, freshest sample only.
+    //   motor_stats — UNRELIABLE + unordered: 10 Hz telemetry, latest only; a dropped frame is
+    //                 replaced by the next tick, never worth stalling the stream for.
+    //   unity_cmds  — RELIABLE + unordered: discrete manager commands (toggles, teleop_active)
+    //                 must be delivered, but independently — a lost packet must not delay later
+    //                 commands by a retransmit RTT.
+    // Route each to its receiver exactly as the old OnDataChannel switch did, but with an
+    // inactive-inclusive search — MotorStatsReceiver lives on an inactive GameObject, so a
+    // plain FindObjectOfType would miss it.
+    var unreliableUnordered = new RTCDataChannelInit() { ordered = false, maxRetransmits = 0 };
+    hapticsChannel = pc.CreateDataChannel("haptics", unreliableUnordered);
+    unityCmdsChannel = pc.CreateDataChannel("unity_cmds", reliableUnordered);
+    motorStatsChannel = pc.CreateDataChannel("motor_stats", unreliableUnordered);
 
     var hapticReceiver = FindFirstObjectByType<WebRTCHapticReceiver>(FindObjectsInactive.Include);
     if (hapticReceiver != null) hapticReceiver.OnHapticsChannelReceived(hapticsChannel);
@@ -977,19 +1008,53 @@ public void ToggleVideoStream(bool isOn)
     StopConnection();
   }
 
-  // Robot-safety gate: taking the headset off (or any OS pause — system menu, app switch)
-  // pauses teleop and tells the manager, so re-donning can NEVER resume pose streaming until
-  // the operator explicitly presses Play (which resumes via the manager's existing blend).
-  // Without this, _teleopActive stayed true across a doff and the pose stream snapped back on
-  // re-don, sweeping the robot to wherever the operator's arms happened to be. If the report
-  // doesn't flush before the OS suspends us, the manager's stale-pose guard still HOLDs.
+  // ── Doff safety ─────────────────────────────────────────────────────────────
+  // Robot-safety gate: taking the headset off pauses teleop and tells the manager, so
+  // re-donning can NEVER resume pose streaming until the operator (or the manager's green
+  // button) explicitly resumes. Without this, _teleopActive stayed true across a doff and the
+  // pose stream snapped back on re-don, sweeping the robot to wherever the operator's arms
+  // happened to be. Two triggers, first one wins (PauseTeleopForSafety is idempotent):
+  //   1. OVRManager.HMDUnmounted — the proximity sensor, fires IMMEDIATELY on doff while the
+  //      app still runs, so the manager report goes out before any OS suspend.
+  //   2. OnApplicationPause — backstop for any OS pause (system menu, app switch, screen off).
+  // The manager receives teleop_active=false on unity_state → _pause_teleop(): holds pose,
+  // flips to WAITING, and its green Start button re-engages (resume blend) when ready.
+
+  private void OnHmdUnmounted()
+  {
+    PauseTeleopForSafety("Headset removed");
+  }
+
+  private void OnHmdMounted()
+  {
+    // Informational only — teleop deliberately stays paused until an explicit resume.
+    Debug.Log("[WebRTCController] Headset re-donned — teleop stays paused until Play / manager Start.");
+  }
+
   private void OnApplicationPause(bool paused)
   {
-    if (paused && _teleopActive)
+    if (paused) PauseTeleopForSafety("App paused (headset doffed / system overlay)");
+  }
+
+  // Pause teleop and (reliably) tell the manager. The report is retried from Update() until
+  // the unity_state send actually succeeds — a doff can race the channel, and a lost report
+  // would leave the manager's UI saying "teleoperating" while the Quest has already stopped.
+  private void PauseTeleopForSafety(string reason)
+  {
+    if (!_teleopActive) return;
+    SetTeleopActive(false);
+    _pendingTeleopPauseReport = true;
+    TryFlushTeleopPauseReport();
+    Debug.Log($"[WebRTCController] {reason} — teleop paused for safety" +
+              (_pendingTeleopPauseReport ? " (manager report pending)." : " (manager notified)."));
+  }
+
+  private void TryFlushTeleopPauseReport()
+  {
+    if (_pendingTeleopPauseReport &&
+        SendUnityState("{\"type\":\"unity_state\",\"command\":\"teleop_active\",\"enabled\":false}"))
     {
-      SetTeleopActive(false);
-      SendUnityState("{\"type\":\"unity_state\",\"command\":\"teleop_active\",\"enabled\":false}");
-      Debug.Log("[WebRTCController] App paused (headset doffed?) — teleop paused for safety.");
+      _pendingTeleopPauseReport = false;
     }
   }
 

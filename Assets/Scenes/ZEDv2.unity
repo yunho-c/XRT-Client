@@ -11236,6 +11236,8 @@ MonoBehaviour:
   vibratoDepth: 0.003
   vibratoFadeIn: 0.06
   harmonic2Gain: 0.02
+  brightHarmonic2Gain: 0.35
+  brightHarmonic3Gain: 0.2
   sensorFloor: 0.1
   lightCutoff: 0.1
   mediumCutoff: 0.35
@@ -17794,6 +17796,7 @@ MonoBehaviour:
   connectTimeoutSeconds: 12
   receiveVideo: 0
   videoStreamVisible: 0
+  useStun: 0
 --- !u!4 &1746223497
 Transform:
   m_ObjectHideFlags: 0
