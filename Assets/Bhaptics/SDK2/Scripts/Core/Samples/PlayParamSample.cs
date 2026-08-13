@@ -299,5 +299,18 @@ namespace Bhaptics.SDK2
             initCanvas.gameObject.SetActive(false);
             mainCanvas.gameObject.SetActive(true);
         }
+
+        private bool isSpidermanGestureActive;
+
+        private void Update()
+        {
+            // When the user makes a spiderman gesture the UI should pop up,
+            // and when they stop it should disappear.
+            if (Input.GetKeyDown(KeyCode.Space))
+            {
+                isSpidermanGestureActive = !isSpidermanGestureActive;
+                mainCanvas.gameObject.SetActive(isSpidermanGestureActive);
+            }
+        }
     }
 }
